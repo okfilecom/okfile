@@ -109,6 +109,23 @@ function xmlResponse(xml, status = 200, extraHeaders = {}) {
   });
 }
 
+function svgResponse(svg, status = 200, extraHeaders = {}) {
+  return new Response(svg, {
+    status,
+    headers: {
+      'Content-Type': 'image/svg+xml; charset=utf-8',
+      'Cache-Control': 'public, max-age=86400',
+      ...extraHeaders
+    }
+  });
+}
+
+const FAVICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <rect width="64" height="64" rx="14" fill="#0a0a0a"/>
+  <path d="M18 18h11c10.5 0 17 5.3 17 14s-6.5 14-17 14H18V18zm10.4 21.2c5.9 0 9.6-2.6 9.6-7.2s-3.7-7.2-9.6-7.2H26v14.4h2.4z" fill="#2563eb"/>
+  <path d="M48 20 35 46h-8l13-26h8z" fill="#60a5fa"/>
+</svg>`;
+
 function pageSeoConfig(lang, pageType) {
   const isEn = lang === 'en';
   if (pageType === 'upload') {
@@ -834,6 +851,7 @@ function viewerShell(title, body, extraHead = '') {
   return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
 <title>${title}</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="icon" href="/favicon.ico" type="image/svg+xml">
 ${extraHead}
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -856,6 +874,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Micr
 .btn-disabled{opacity:.45;pointer-events:none;cursor:not-allowed}
 .name{font-size:18px;font-weight:600;margin:8px 0 6px;color:#fff;word-break:break-word}
 .hint{color:#888;font-size:13px;line-height:1.6}
+.warn{margin-top:12px;padding:12px 14px;border-radius:10px;background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.22);color:#fbbf24;font-size:13px;line-height:1.7;text-align:left}
 </style></head><body>${body}</body></html>`;
 }
 
@@ -900,17 +919,48 @@ function videoViewerPage(meta) {
   return viewerShell(
     `OkFile - ${escapeHtml(meta.name || meta.id)}`,
     `<div class="wrap">
-      <div class="panel"><video controls playsinline preload="metadata" src="${src}"></video></div>
+      <div class="panel"><video id="videoPlayer" controls playsinline preload="metadata" src="${src}"></video></div>
       <span class="tag video">VIDEO</span>
       <div class="name">${escapeHtml(meta.name || meta.id)}</div>
       <div class="info"><span>${formatSize(meta.size)}</span><span>${escapeHtml(meta.contentType)}</span><span>${escapeHtml(meta.id)}</span></div>
+      <div class="warn" id="videoCompatHint">如果播放器空白、只有音频没有画面，通常表示当前浏览器不兼容该 MP4 的视频编码。请优先尝试“下载视频”或“文件直链”；如需稳定在线预览，建议转码为 H.264 + AAC 的 MP4。</div>
       ${downloadLimitHint(meta)}
       <div class="actions">
         ${viewerDownloadAction(meta, '下载视频')}
         <a class="btn" href="${src}" target="_blank">文件直链</a>
         <a class="btn" href="/">返回首页</a>
       </div>
-    </div>`
+    </div>`,
+    `<script>
+document.addEventListener('DOMContentLoaded', function () {
+  var video = document.getElementById('videoPlayer');
+  var hint = document.getElementById('videoCompatHint');
+  if (!video || !hint) return;
+  function showHint(extra) {
+    if (extra) hint.textContent = extra;
+    hint.style.display = 'block';
+  }
+  function maybeHideHint() {
+    if ((video.videoWidth || 0) > 0 && (video.videoHeight || 0) > 0) {
+      hint.style.display = 'none';
+    }
+  }
+  hint.style.display = 'block';
+  video.addEventListener('loadedmetadata', function () {
+    setTimeout(function () {
+      if ((video.videoWidth || 0) === 0 && Number.isFinite(video.duration) && video.duration > 0) {
+        showHint('当前浏览器已读取到视频时长，但没有解码出可显示画面。这通常是视频编码不兼容。请下载视频或使用文件直链；如需稳定预览，建议转码为 H.264 + AAC 的 MP4。');
+        return;
+      }
+      maybeHideHint();
+    }, 800);
+  });
+  video.addEventListener('error', function () {
+    showHint('当前浏览器无法播放这个视频文件。你可以先下载视频，或转码为 H.264 + AAC 的 MP4 后再预览。');
+  });
+  video.addEventListener('playing', maybeHideHint);
+});
+</script>`
   );
 }
 
@@ -1936,8 +1986,23 @@ export default {
     }
 
     if (request.method === 'OPTIONS') return corsPreflight();
+    if (request.method === 'GET' && (url.pathname === '/favicon.ico' || url.pathname === '/favicon.svg')) {
+      return svgResponse(FAVICON_SVG);
+    }
     if (request.method === 'GET' && url.pathname === '/robots.txt') return renderRobotsTxt(request);
     if (request.method === 'GET' && url.pathname === '/sitemap.xml') return renderSitemapXml(request);
+    if (
+      request.method === 'GET' &&
+      (
+        url.pathname === '/skill' ||
+        url.pathname === '/skill/' ||
+        url.pathname === '/skills/install' ||
+        url.pathname === '/install-skill' ||
+        url.pathname === '/.well-known/skill'
+      )
+    ) {
+      return redirect('/SKILL.md');
+    }
 
     if (request.method === 'GET' && (url.pathname === '/' || url.pathname === '/index.html')) {
       return redirect(localizedHomePath('zh'));

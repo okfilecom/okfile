@@ -1,4 +1,4 @@
-﻿﻿﻿﻿---
+---
 name: okfile
 description: Upload and publish images, videos, PDFs, and common files to OkFile. Use when an agent needs direct links, preview URLs, anonymous upload, or API-key-based publishing.
 version: 1.0.0

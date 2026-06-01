@@ -1,4 +1,4 @@
-﻿---
+---
 name: okfile
 description: Upload and publish images, videos, PDFs, and common files to OkFile when an agent needs direct links, preview URLs, anonymous upload, API-key-based publishing, or multipart retry with missing-part recovery.
 version: 1.0.0
@@ -17,7 +17,7 @@ categories:
 job_roles:
   - developer
 author: OkFile
-github: YOUR_GITHUB_USERNAME
+github: okfilecom
 license: apache-2.0
 ---
 # OkFile Skill
