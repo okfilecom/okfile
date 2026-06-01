@@ -268,7 +268,7 @@
 
     <div class="code-block">
       <div class="code-header"><span class="label"><span class="zh">接入顺序</span><span class="en">Integration Order</span></span></div>
-      <pre><code><span class="code-comment"># 方式 A：匿名上载，适合直接发布</span>
+      <pre class="zh"><code><span class="code-comment"># 方式 A：匿名上载，适合直接发布</span>
 1. POST /api/upload/prepare
 2. 对 uploadUrl 或 parts[].uploadUrl 执行 PUT
 3. POST /api/upload/complete
@@ -280,6 +280,18 @@
 - 默认返回文件直链
 - 追加 ?play=1 进入预览/播放页
 - 人工页面仅作为辅助入口</code></pre>
+      <pre class="en"><code><span class="code-comment"># Mode A: anonymous upload for direct publishing</span>
+1. POST /api/upload/prepare
+2. PUT to uploadUrl or each parts[].uploadUrl
+3. POST /api/upload/complete
+
+<span class="code-comment"># Notes</span>
+- Anonymous mode is rate-limited by IP
+- API key mode follows admin-configured rate and upload quotas
+- Supports parallel multi-file uploads and multipart concurrency
+- Returns the direct file URL by default
+- Append ?play=1 to open the preview or playback page
+- The manual page is kept only as a supplementary entry</code></pre>
     </div>
 
     <div style="margin-top:20px;padding:16px;background:rgba(22,163,74,.06);border:1px solid rgba(22,163,74,.15);border-radius:8px;font-size:13px;color:#86efac;line-height:1.6">
@@ -305,7 +317,7 @@
       <span class="label"><span class="zh">最简接入</span><span class="en">Quick Start</span></span>
       <button onclick="cpCode(this)"><span class="zh">复制</span><span class="en">Copy</span></button>
     </div>
-    <pre><code><span class="code-comment"># 最小链路：prepare -> PUT -> complete</span>
+    <pre class="zh"><code><span class="code-comment"># 最小链路：prepare -> PUT -> complete</span>
 <span class="code-comment"># 1) 申请上载地址。匿名可不传 apiKey；如需更小分片，可传 preferredPartSize。</span>
 <span class="code-keyword">curl</span> <span class="code-flag">-X POST</span> <span class="code-string">"https://www.okfile.com/api/upload/prepare"</span> \
   <span class="code-flag">-H</span> <span class="code-string">"Content-Type: application/json"</span> \
@@ -319,6 +331,20 @@
 
 <span class="code-comment"># 可选：用 status 查询分片进度</span>
 <span class="code-keyword">curl</span> <span class="code-string">"https://www.okfile.com/api/upload/status/a3k7m92x"</span></code></pre>
+    <pre class="en"><code><span class="code-comment"># Minimal flow: prepare -> PUT -> complete</span>
+<span class="code-comment"># 1) Request upload URLs. Omit apiKey for anonymous mode; pass preferredPartSize if you want smaller parts.</span>
+<span class="code-keyword">curl</span> <span class="code-flag">-X POST</span> <span class="code-string">"https://www.okfile.com/api/upload/prepare"</span> \
+  <span class="code-flag">-H</span> <span class="code-string">"Content-Type: application/json"</span> \
+  <span class="code-flag">--data</span> <span class="code-string">'{"filename":"photo.jpg","size":12345,"contentType":"image/jpeg","preferredPartSize":5242880}'</span>
+
+<span class="code-comment"># 2) PUT to uploadUrl or each parts[].uploadUrl returned by prepare</span>
+<span class="code-comment"># 3) Call complete with only id. If missingParts is returned, re-upload only those parts.</span>
+<span class="code-keyword">curl</span> <span class="code-flag">-X POST</span> <span class="code-string">"https://www.okfile.com/api/upload/complete"</span> \
+  <span class="code-flag">-H</span> <span class="code-string">"Content-Type: application/json"</span> \
+  <span class="code-flag">--data</span> <span class="code-string">'{"id":"a3k7m92x"}'</span>
+
+<span class="code-comment"># Optional: query multipart progress with status</span>
+<span class="code-keyword">curl</span> <span class="code-string">"https://www.okfile.com/api/upload/status/a3k7m92x"</span></code></pre>
   </div>
 
   <!-- POST Upload -->
@@ -327,12 +353,27 @@
       <span class="label"><span class="method method-post">POST</span>&nbsp;/api/upload/prepare</span>
       <button onclick="cpCode(this)"><span class="zh">复制</span><span class="en">Copy</span></button>
     </div>
-    <pre><code><span class="code-comment"># 1) 申请单传或分片上载地址；多文件任务可并行调用</span>
+    <pre class="zh"><code><span class="code-comment"># 1) 申请单传或分片上载地址；多文件任务可并行调用</span>
 <span class="code-keyword">curl</span> <span class="code-flag">-X POST</span> <span class="code-string">"https://www.okfile.com/api/upload/prepare"</span> \
   <span class="code-flag">-H</span> <span class="code-string">"Content-Type: application/json"</span> \
   <span class="code-flag">--data</span> <span class="code-string">'{"filename":"photo.jpg","size":12345,"contentType":"image/jpeg","preferredPartSize":5242880,"apiKey":"okf_..."}'</span>
 
 <span class="code-comment"># 响应:</span>
+{
+  <span class="code-string">"success"</span>: true,
+  <span class="code-string">"id"</span>: <span class="code-string">"a3k7m92x"</span>,
+  <span class="code-string">"mode"</span>: <span class="code-string">"single"</span>,
+  <span class="code-string">"uploadUrl"</span>: <span class="code-url">"https://...r2.cloudflarestorage.com/okfile-files/a3k7m92x?X-Amz-..."</span>,
+  <span class="code-string">"url"</span>: <span class="code-url">"https://www.okfile.com/i/a3k7m92x"</span>,
+  <span class="code-string">"playUrl"</span>: <span class="code-url">"https://www.okfile.com/i/a3k7m92x?play=1"</span>,
+  <span class="code-string">"type"</span>: <span class="code-string">"image"</span>
+}</code></pre>
+    <pre class="en"><code><span class="code-comment"># 1) Request single-upload or multipart upload URLs; multiple files can call this in parallel</span>
+<span class="code-keyword">curl</span> <span class="code-flag">-X POST</span> <span class="code-string">"https://www.okfile.com/api/upload/prepare"</span> \
+  <span class="code-flag">-H</span> <span class="code-string">"Content-Type: application/json"</span> \
+  <span class="code-flag">--data</span> <span class="code-string">'{"filename":"photo.jpg","size":12345,"contentType":"image/jpeg","preferredPartSize":5242880,"apiKey":"okf_..."}'</span>
+
+<span class="code-comment"># Response:</span>
 {
   <span class="code-string">"success"</span>: true,
   <span class="code-string">"id"</span>: <span class="code-string">"a3k7m92x"</span>,
@@ -348,7 +389,7 @@
     <div class="code-header">
       <span class="label"><span class="method">PUT</span>&nbsp;uploadUrl / parts[].uploadUrl</span>
     </div>
-    <pre><code><span class="code-comment"># 2) 对 prepare 返回的 uploadUrl 执行 PUT</span>
+    <pre class="zh"><code><span class="code-comment"># 2) 对 prepare 返回的 uploadUrl 执行 PUT</span>
 <span class="code-comment"># 单文件模式：PUT 一次即可</span>
 <span class="code-keyword">curl</span> <span class="code-flag">-X PUT</span> <span class="code-string">"$uploadUrl"</span> \
   <span class="code-flag">-H</span> <span class="code-string">"Content-Type: image/jpeg"</span> \
@@ -357,13 +398,22 @@
 
 <span class="code-comment"># 分片模式：对每个 parts[i].uploadUrl 分别 PUT</span>
 <span class="code-comment"># 多文件任务可并行执行多个 PUT</span></code></pre>
+    <pre class="en"><code><span class="code-comment"># 2) PUT the file body to the uploadUrl returned by prepare</span>
+<span class="code-comment"># Single-upload mode: one PUT is enough</span>
+<span class="code-keyword">curl</span> <span class="code-flag">-X PUT</span> <span class="code-string">"$uploadUrl"</span> \
+  <span class="code-flag">-H</span> <span class="code-string">"Content-Type: image/jpeg"</span> \
+  <span class="code-flag">-H</span> <span class="code-string">"Content-Length: 12345"</span> \
+  <span class="code-flag">--data-binary</span> <span class="code-string">"@photo.jpg"</span>
+
+<span class="code-comment"># Multipart mode: PUT to each parts[i].uploadUrl separately</span>
+<span class="code-comment"># Multiple file tasks can run multiple PUTs in parallel</span></code></pre>
   </div>
 
   <div class="code-block">
     <div class="code-header">
       <span class="label"><span class="method method-post">POST</span>&nbsp;/api/upload/complete</span>
     </div>
-    <pre><code><span class="code-comment"># 3) 上载完成后确认</span>
+    <pre class="zh"><code><span class="code-comment"># 3) 上载完成后确认</span>
 <span class="code-comment"># 单文件和分片模式都只需要 id</span>
 <span class="code-keyword">curl</span> <span class="code-flag">-X POST</span> <span class="code-string">"https://www.okfile.com/api/upload/complete"</span> \
   <span class="code-flag">-H</span> <span class="code-string">"Content-Type: application/json"</span> \
@@ -371,6 +421,14 @@
 
 <span class="code-comment"># 分片模式下，后台会自动查询已上载分片并完成合并</span>
 <span class="code-comment"># 若分片不完整，将返回 HTTP 409 及 missingParts 数组，客户端可据此重试</span></code></pre>
+    <pre class="en"><code><span class="code-comment"># 3) Confirm after upload completes</span>
+<span class="code-comment"># Both single and multipart modes only need id</span>
+<span class="code-keyword">curl</span> <span class="code-flag">-X POST</span> <span class="code-string">"https://www.okfile.com/api/upload/complete"</span> \
+  <span class="code-flag">-H</span> <span class="code-string">"Content-Type: application/json"</span> \
+  <span class="code-flag">--data</span> <span class="code-string">'{"id":"a3k7m92x"}'</span>
+
+<span class="code-comment"># In multipart mode, the backend automatically lists uploaded parts and finalizes the merge</span>
+<span class="code-comment"># If parts are missing, the API returns HTTP 409 and a missingParts array for targeted retry</span></code></pre>
   </div>
 
   <div class="code-block">
@@ -378,10 +436,22 @@
       <span class="label"><span class="method method-get">GET</span>&nbsp;/api/upload/status/{id}</span>
       <button onclick="cpCode(this)"><span class="zh">复制</span><span class="en">Copy</span></button>
     </div>
-    <pre><code><span class="code-comment"># 查询上载状态与进度</span>
+    <pre class="zh"><code><span class="code-comment"># 查询上载状态与进度</span>
 <span class="code-keyword">curl</span> <span class="code-string">"https://www.okfile.com/api/upload/status/a3k7m92x"</span>
 
 <span class="code-comment"># 响应:</span>
+{
+  <span class="code-string">"id"</span>: <span class="code-string">"a3k7m92x"</span>,
+  <span class="code-string">"status"</span>: <span class="code-string">"uploading"</span>,
+  <span class="code-string">"progress"</span>: <span class="code-string">"45/50"</span>,
+  <span class="code-string">"uploadedParts"</span>: 45,
+  <span class="code-string">"totalParts"</span>: 50,
+  <span class="code-string">"bytesReceived"</span>: 471859200
+}</code></pre>
+    <pre class="en"><code><span class="code-comment"># Query upload status and progress</span>
+<span class="code-keyword">curl</span> <span class="code-string">"https://www.okfile.com/api/upload/status/a3k7m92x"</span>
+
+<span class="code-comment"># Response:</span>
 {
   <span class="code-string">"id"</span>: <span class="code-string">"a3k7m92x"</span>,
   <span class="code-string">"status"</span>: <span class="code-string">"uploading"</span>,
@@ -397,11 +467,17 @@
     <div class="code-header">
       <span class="label"><span class="method method-get">GET</span>&nbsp;/i/{id} — <span class="zh">默认直链</span><span class="en">Default Direct Link</span></span>
     </div>
-    <pre><code><span class="code-comment"># 返回 HTML 页面：</span>
+    <pre class="zh"><code><span class="code-comment"># 返回 HTML 页面：</span>
 <span class="code-comment"># 直接访问即返回原始文件：</span>
 <span class="code-url">https://www.okfile.com/i/a3k7m92x</span>
 
 <span class="code-comment"># 加 ?play=1 进入在线预览/播放页</span>
+<span class="code-url">https://www.okfile.com/i/a3k7m92x?play=1</span></code></pre>
+    <pre class="en"><code><span class="code-comment"># Direct file access:</span>
+<span class="code-comment"># Visiting the URL directly returns the original file:</span>
+<span class="code-url">https://www.okfile.com/i/a3k7m92x</span>
+
+<span class="code-comment"># Append ?play=1 to open the preview or playback page</span>
 <span class="code-url">https://www.okfile.com/i/a3k7m92x?play=1</span></code></pre>
   </div>
 
