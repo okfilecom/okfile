@@ -1,0 +1,19 @@
+"$schema" = "./node_modules/wrangler/config-schema.json"
+
+name = "okfile"
+compatibility_date = "2026-05-25"
+pages_build_output_dir = "."
+
+[vars]
+R2_ACCOUNT_ID = "27f2f14c79f2cf2b1e65c67bdf4be682"
+RESEND_FROM_EMAIL = "no-reply@okfile.com"
+ADMIN_EMAILS = "sungz@163.com"
+
+[[r2_buckets]]
+binding = "FILES"
+bucket_name = "okfile-files"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "okfile-auth"
+database_id = "0fcf12da-a653-4dee-ad50-04e097ec1c66"

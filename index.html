@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OkFile — 面向 Agent 的文件上载与发布服务</title>
+<meta name="description" id="metaDesc" content="OkFile 主要为 Agent 提供文件上载与发布能力，支持匿名调用、API Key、分片上载、缺失分片重试、状态查询、直链返回和预览链接。人工上载页面作为辅助入口保留。">
+<meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1">
+<meta name="theme-color" content="#0a0a0a">
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  :root{
+    --bg:#0a0a0a;--surface:#141414;--border:#222;--text:#f1f5f9;--muted:#b6c2d0;
+    --primary:#2563eb;--primary-hover:#1d4ed8;--green:#16a34a;--red:#ef4444;
+  }
+  body{font-family:-apple-system,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;background:var(--bg);color:var(--text);line-height:1.6}
+
+  /* Nav */
+  .nav{position:sticky;top:0;z-index:100;background:rgba(10,10,10,.92);backdrop-filter:blur(16px);border-bottom:1px solid var(--border);padding:14px 24px;display:flex;align-items:center;justify-content:space-between;gap:16px}
+  .nav .logo{font-size:20px;font-weight:700;color:#fff}.nav .logo span{color:var(--primary)}
+  .nav .links{display:flex;gap:8px;align-items:center}
+  .nav a{color:#cbd5e1;text-decoration:none;font-size:13px;padding:7px 16px;border-radius:8px;border:1px solid transparent;transition:.2s}
+  .nav a:hover{color:#fff;border-color:var(--border)}
+  .nav .actions{display:flex;gap:8px;align-items:center;flex-shrink:0}
+  .nav a.btn-manual{background:transparent;color:#cbd5e1;border-color:rgba(148,163,184,.28);padding:6px 12px;font-size:12px}
+  .nav a.btn-manual:hover{color:#fff;border-color:rgba(148,163,184,.45);background:transparent}
+
+  /* Hero */
+  .hero{text-align:center;padding:60px 24px 20px;max-width:800px;margin:0 auto}
+  .hero .badge{display:inline-block;background:rgba(37,99,235,.12);color:#60a5fa;border:1px solid rgba(37,99,235,.25);padding:4px 14px;border-radius:20px;font-size:12px;font-weight:600;letter-spacing:.5px;margin-bottom:16px}
+  .hero h1{font-size:clamp(32px,6vw,52px);font-weight:800;color:#fff;line-height:1.15;margin-bottom:12px}
+  .hero h1 .lead{display:block;font-size:clamp(20px,3.3vw,28px);font-weight:600;color:#d4dde8;margin-bottom:6px}
+  .hero h1 .main{display:block;color:var(--primary)}
+  .hero p{font-size:17px;color:var(--muted);max-width:640px;margin:0 auto 0;line-height:1.8}
+  .hero .actions{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
+  .hero .actions a,.hero .actions button{display:inline-flex;align-items:center;gap:8px;padding:13px 28px;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer;transition:.2s;text-decoration:none}
+  .btn-upload{background:var(--primary);color:#fff;border:none}.btn-upload:hover{background:var(--primary-hover)}
+  .btn-outline{background:transparent;color:var(--text);border:1px solid var(--border)}.btn-outline:hover{border-color:#444;color:#fff}
+
+  /* Section */
+  section{max-width:900px;margin:0 auto;padding:48px 24px}
+  h2{font-size:24px;font-weight:700;color:#fff;margin-bottom:8px}
+  h2 .num{color:var(--primary);font-size:18px;font-weight:700;margin-right:6px}
+  .section-desc{color:var(--muted);font-size:15px;margin-bottom:28px}
+
+  /* Features grid */
+  #features{padding-top:8px}
+  .features{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-bottom:40px}
+  .feature-card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:16px 18px;transition:.2s}
+  .feature-card:hover{border-color:#333}
+  .feature-card .feature-head{display:flex;align-items:center;gap:10px;margin-bottom:8px;min-width:0}
+  .feature-card .icon{font-size:20px;line-height:1;flex-shrink:0}
+  .feature-card h3{font-size:14px;font-weight:600;color:#fff;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+  .feature-card p{font-size:12px;color:var(--muted);line-height:1.45}
+  .feature-card a{color:#79c0ff;text-decoration:none}
+  .feature-card a:hover{text-decoration:underline}
+
+  /* How it works */
+  .steps{display:flex;flex-direction:column;gap:16px}
+  .step{display:flex;gap:18px;align-items:flex-start;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px 24px;transition:.2s}
+  .step:hover{border-color:#333}
+  .step-num{width:36px;height:36px;border-radius:50%;background:rgba(37,99,235,.12);color:var(--primary);font-size:14px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+  .step h3{font-size:15px;color:#fff;margin-bottom:4px}
+  .step p{font-size:13px;color:var(--muted)}
+
+  /* Code block */
+  .code-block{background:#0c0c0c;border:1px solid var(--border);border-radius:10px;overflow:hidden;margin:20px 0}
+  .code-header{display:flex;align-items:center;justify-content:space-between;padding:10px 16px;background:#111;border-bottom:1px solid var(--border)}
+  .code-header .label{font-size:12px;color:#aab4c0}.code-header button{font-size:11px;padding:4px 12px;border-radius:6px;background:var(--surface);color:#d3dbe5;border:1px solid var(--border);cursor:pointer}
+  pre{padding:18px 20px;overflow-x:auto;font-size:13px;line-height:1.65}
+  code{font-family:'SF Mono',Consolas,'Cascadia Code',monospace;color:#c9d1d9}
+  .code-comment{color:#9fb0c3}
+  .code-string{color:#a5d6ff}
+  .code-keyword{color:#ff7b72}
+  .code-url{color:#79c0ff}
+  .code-flag{color:#ffa657}
+
+  /* API table */
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th{text-align:left;padding:10px 14px;background:var(--surface);color:#d0d8e3;font-weight:500;border-bottom:1px solid var(--border);font-size:12px;text-transform:uppercase;letter-spacing:.5px}
+  td{padding:10px 14px;border-bottom:1px solid #1a1a1a;color:var(--muted)}
+  tr:last-child td{border-bottom:none}
+  .method{font-family:monospace;font-size:11px;font-weight:700;padding:3px 8px;border-radius:4px;display:inline-block}
+  .method-get{background:rgba(22,163,74,.12);color:#4ade80}.method-post{background:rgba(37,99,235,.12);color:#60a5fa}
+  td code{font-family:'SF Mono',Consolas,monospace;font-size:12px;color:#79c0ff}
+
+  /* Supported formats */
+  .formats{display:flex;flex-wrap:wrap;gap:8px}
+  .fmt-tag{background:var(--surface);border:1px solid var(--border);padding:5px 14px;border-radius:6px;font-size:12px;color:#ccc}
+  .fmt-tag img{vertical-align:middle;margin-right:4px}
+
+  /* Agent section */
+  .agent-box{background:linear-gradient(135deg,#111 0%,#0f172a 100%);border:1px solid rgba(37,99,235,.2);border-radius:16px;padding:36px;margin-top:24px}
+  .agent-box h3{font-size:18px;color:#fff;margin-bottom:8px;display:flex;align-items:center;gap:8px}
+  .agent-box > div > h3 .icon{font-size:22px}
+  .agent-box .agent-desc{font-size:14px;color:var(--muted);margin-bottom:20px}
+  .agent-box .skill-meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:20px}
+  .meta-item{background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06);border-radius:8px;padding:12px 16px}
+  .meta-item .label{font-size:11px;color:#aeb8c4;text-transform:uppercase;letter-spacing:.5px}
+  .meta-item .value{font-size:14px;color:#ddd;margin-top:2px}
+  .agent-actions{display:flex;gap:10px;flex-wrap:wrap}
+  .agent-actions a{display:inline-flex;align-items:center;gap:8px;padding:10px 14px;border-radius:10px;border:1px solid rgba(148,163,184,.28);color:#dbe7f5;text-decoration:none;font-size:13px;transition:.2s}
+  .agent-actions a:hover{border-color:rgba(148,163,184,.45);color:#fff;background:rgba(255,255,255,.03)}
+  .doc-link{color:#79c0ff;text-decoration:none}
+  .doc-link:hover{text-decoration:underline}
+
+  /* Footer */
+  footer{text-align:center;padding:32px 24px;font-size:12px;color:#8c99a8;border-top:1px solid var(--border)}
+  footer a{color:var(--primary);text-decoration:none}
+
+  @media(max-width:640px){
+    .hero{padding:40px 20px 28px}
+    .step{flex-direction:column;gap:12px}
+    .nav{padding:12px 16px}
+    .nav .links-main{display:none}
+    .nav .actions{margin-left:auto}
+    .nav .actions a{padding:6px 10px}
+    .nav a.btn-manual{font-size:11px;padding:5px 10px}
+    .features{grid-template-columns:1fr;gap:10px}
+    .feature-card{padding:14px 16px}
+    .feature-card .icon{font-size:18px}
+    .feature-card h3{font-size:13px}
+    .feature-card p{font-size:12px}
+  }
+
+  /* i18n classes */
+  html[lang="en"] .zh { display: none !important; }
+  html[lang="zh-CN"] .en { display: none !important; }
+</style>
+</head>
+<body>
+
+<!-- Nav -->
+<nav class="nav">
+  <div class="logo">Ok<span>File</span></div>
+  <div class="links links-main">
+    <a href="#agent-integration"><span class="zh">Agent Skill/技能</span><span class="en">Agent Skill</span></a>
+    <a href="#api-doc"><span class="zh">API 文档</span><span class="en">API Docs</span></a>
+  </div>
+  <div class="actions">
+    <a class="btn-manual" href="/upload.html"><span class="zh">人工上载入口</span><span class="en">Manual Upload</span></a>
+    <a href="/account"><span class="zh">账户中心</span><span class="en">Account</span></a>
+    <a href="#" id="langToggle" style="font-weight:bold;margin-left:8px;color:#aaa;">EN</a>
+  </div>
+</nav>
+
+<!-- Hero -->
+<div class="hero">
+  <div class="badge">V1.0 · Agent First / <span class="zh">发布 / 上载 / 匿名</span><span class="en">Publish / Upload / Anonymous</span> / API Key</div>
+  <h1><span class="lead"><span class="zh">为 Agent 设计的</span><span class="en">File Publish Service</span></span><span class="main"><span class="zh">文件发布服务</span><span class="en">Designed for Agents</span></span></h1>
+</div>
+
+<!-- Features -->
+<section id="features">
+  <div class="features">
+    <div class="feature-card">
+      <div class="feature-head">
+        <div class="icon">&#128279;</div>
+        <h3><span class="zh">一键快速发布</span><span class="en">One-Click Fast Publish</span></h3>
+      </div>
+      <p><span class="zh">上载文件即可获得直链。</span><span class="en">Upload a file and get a direct link instantly.</span></p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-head">
+        <div class="icon">&#129302;</div>
+        <h3><span class="zh">Agent 优先</span><span class="en">Agent First</span></h3>
+      </div>
+      <p><span class="zh">支持各种 Agent 和 Skill，支持发布各类文件。</span><span class="en">Supports all kinds of Agents and Skills, and can publish many file types.</span></p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-head">
+        <div class="icon">&#128274;</div>
+        <h3><span class="zh">匿名 + API Key</span><span class="en">Anonymous + API Key</span></h3>
+      </div>
+      <p><span class="zh">支持匿名发布；也可以注册生成 API Key，可以享用更多配额。</span><span class="en">Supports anonymous publishing; you can also register for an API Key to get more quota.</span></p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-head">
+        <div class="icon">&#128230;</div>
+        <h3><span class="zh">批量、并行与大文件上载</span><span class="en">Batch, Parallel & Large Files</span></h3>
+      </div>
+      <p><span class="zh">支持多文件任务并行上载与大文件分片，单文件上限 500MB，适合 Agent 连续处理发布任务。</span><span class="en">Supports parallel multi-file uploads and large file chunking (up to 500MB), perfect for continuous Agent tasks.</span></p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-head">
+        <div class="icon">&#128247;</div>
+        <h3><span class="zh">图片、视频、PDF 预览</span><span class="en">Image, Video, PDF Previews</span></h3>
+      </div>
+      <p><span class="zh">同一份发布结果同时支持直链下载和预览链接，方便 Agent 在不同场景下返回合适链接。</span><span class="en">The same publish result supports both direct consumption and `?play=1` previews, allowing Agents to return appropriate links.</span></p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-head">
+        <div class="icon">&#128187;</div>
+        <h3><span class="zh">人工入口保留</span><span class="en">Manual Entry Retained</span></h3>
+      </div>
+      <p><span class="zh">人工上载页面作为辅助入口，便于手动操作。<a href="/zh/upload/">上载链接</a></span><span class="en">The manual upload page serves as a supplementary entry for manual operations. <a href="/en/upload/">Upload link</a></span></p>
+    </div>
+  </div>
+</section>
+
+<!-- Supported Formats -->
+<section id="how-to-use">
+  <h2><span class="num">01</span><span class="zh">支持的格式</span><span class="en">Supported Formats</span></h2>
+  <p class="section-desc"><span class="zh">覆盖主流发布场景，自动识别常见文件类型</span><span class="en">Covers mainstream publish scenarios, auto-detects common file types</span></p>
+  <div class="formats">
+    <span class="fmt-tag">JPG / JPEG</span>
+    <span class="fmt-tag">PNG</span>
+    <span class="fmt-tag">GIF</span>
+    <span class="fmt-tag">WebP</span>
+    <span class="fmt-tag">BMP</span>
+    <span class="fmt-tag">SVG</span>
+    <span class="fmt-tag" style="border-left:2px solid var(--primary)">MP4</span>
+    <span class="fmt-tag">WebM</span>
+    <span class="fmt-tag">MOV</span>
+    <span class="fmt-tag">AVI</span>
+  </div>
+</section>
+
+<!-- Agent Integration -->
+<section id="agent-integration">
+  <h2><span class="num">02</span><span class="zh">Agent Skill/技能</span><span class="en">Agent Skill</span></h2>
+  <p class="section-desc"><span class="zh">这是首页默认推荐的使用方式，人工上载仅作为补充入口</span><span class="en">This is the recommended usage on the homepage; manual upload is just a supplementary entry</span></p>
+
+  <div class="agent-box">
+    <h3><span class="icon">&#129302;</span> OkFile Skill</h3>
+    <p class="agent-desc"><span class="zh">任意 Agent 都可以直接调用这套接口完成文件上载与发布，支持多文件并行上载，无需依赖人工操作浏览器。</span><span class="en">Any Agent can directly call these APIs to upload and publish files, supporting parallel multi-file uploads without manual browser interaction.</span></p>
+
+    <div class="skill-meta">
+      <div class="meta-item">
+        <div class="label"><span class="zh">Skill 名称</span><span class="en">Skill Name</span></div>
+        <div class="value">okfile</div>
+      </div>
+      <div class="meta-item">
+        <div class="label"><span class="zh">版本</span><span class="en">Version</span></div>
+        <div class="value">V1.0</div>
+      </div>
+      <div class="meta-item">
+        <div class="label"><span class="zh">文档位置</span><span class="en">Doc Location</span></div>
+        <div class="value"><a class="doc-link" href="/SKILL.md" target="_blank" rel="noopener">./SKILL.md</a></div>
+      </div>
+      <div class="meta-item">
+        <div class="label"><span class="zh">触发场景</span><span class="en">Trigger Scenario</span></div>
+        <div class="value"><span class="zh">把图片、视频、PDF 或常见文件发布到 www.okfile.com，并支持多文件并行上载</span><span class="en">Publish images, videos, PDFs, or common files to www.okfile.com, with parallel multi-file upload support.</span></div>
+      </div>
+      <div class="meta-item">
+        <div class="label"><span class="zh">支持的文件类型</span><span class="en">Supported Types</span></div>
+        <div class="value"><span class="zh">图片/视频/PDF/常见文件 (&le;500MB)</span><span class="en">Image/Video/PDF/Common files (&le;500MB)</span></div>
+      </div>
+      <div class="meta-item">
+        <div class="label"><span class="zh">API 端点</span><span class="en">API Endpoints</span></div>
+        <div class="value">POST /api/upload/prepare + PUT uploadUrl + POST /api/upload/complete + GET /api/upload/status/{id}</div>
+      </div>
+      <div class="meta-item">
+        <div class="label"><span class="zh">认证方式</span><span class="en">Auth Method</span></div>
+        <div class="value"><span class="zh">匿名上载按 IP 限流；登录用户可用 API Key 调用并受后台配额管理</span><span class="en">Anonymous uploads are IP rate-limited; logged-in users can use API Keys managed by backend quotas.</span></div>
+      </div>
+      <div class="meta-item">
+        <div class="label"><span class="zh">返回值</span><span class="en">Return Value</span></div>
+        <div class="value">{success, id, url, playUrl, type}</div>
+      </div>
+    </div>
+
+    <h3 style="margin-top:24px;font-size:15px;color:#aaa"><span class="zh">Agent 使用方式</span><span class="en">Agent Usage</span></h3>
+
+    <div class="code-block">
+      <div class="code-header"><span class="label"><span class="zh">接入顺序</span><span class="en">Integration Order</span></span></div>
+      <pre><code><span class="code-comment"># 方式 A：匿名上载，适合直接发布</span>
+1. POST /api/upload/prepare
+2. 对 uploadUrl 或 parts[].uploadUrl 执行 PUT
+3. POST /api/upload/complete
+
+<span class="code-comment"># 说明</span>
+- 匿名模式按 IP 做频率限制
+- API Key 模式按管理员设置的频率与上载次数限制
+- 支持多文件并行上载与分片并行上载
+- 默认返回文件直链
+- 追加 ?play=1 进入预览/播放页
+- 人工页面仅作为辅助入口</code></pre>
+    </div>
+
+    <div style="margin-top:20px;padding:16px;background:rgba(22,163,74,.06);border:1px solid rgba(22,163,74,.15);border-radius:8px;font-size:13px;color:#86efac;line-height:1.6">
+      <strong>&#128161; <span class="zh">Skill 文档说明：</span><span class="en">Skill Doc Note:</span></strong> <span class="zh">项目仓库现已提供 `SKILL.md`（V1.0），覆盖邮箱登录、API Key、管理员配额、`preferredPartSize`、状态查询、缺失分片重试，以及适合 Agent 的上载建议。接入时优先参考该文档。</span><span class="en">The repo provides `SKILL.md` (V1.0), covering email login, API Keys, admin quotas, `preferredPartSize`, upload status queries, missing-part retries, and practical upload guidance for Agents. Refer to it first during integration.</span>
+    </div>
+
+    <div class="agent-actions" style="margin-top:16px">
+      <a href="/SKILL.md" target="_blank" rel="noopener"><span class="zh">查看 Skill 文档</span><span class="en">Open Skill Doc</span></a>
+      <a href="/SKILL.md" download="SKILL.md"><span class="zh">下载 SKILL.md</span><span class="en">Download SKILL.md</span></a>
+    </div>
+  </div>
+</section>
+
+<!-- API Docs -->
+<section id="api-doc">
+  <h2><span class="num">03</span><span class="zh">API 文档</span><span class="en">API Docs</span></h2>
+  <p class="section-desc"><span class="zh">主要面向开发者和 Agent 直接调用，支持匿名上载、并行上载、状态查询，或携带用户 API Key 发布文件。</span><span class="en">Primarily for developers and Agents, supporting anonymous uploads, parallel uploads, status queries, or publishing with user API Keys.</span></p>
+
+  <div class="code-block">
+    <div class="code-header">
+      <span class="label"><span class="zh">最简接入</span><span class="en">Quick Start</span></span>
+      <button onclick="cpCode(this)"><span class="zh">复制</span><span class="en">Copy</span></button>
+    </div>
+    <pre><code><span class="code-comment"># 最小链路：prepare -> PUT -> complete</span>
+<span class="code-comment"># 1) 申请上载地址。匿名可不传 apiKey；如需更小分片，可传 preferredPartSize。</span>
+<span class="code-keyword">curl</span> <span class="code-flag">-X POST</span> <span class="code-string">"https://www.okfile.com/api/upload/prepare"</span> \
+  <span class="code-flag">-H</span> <span class="code-string">"Content-Type: application/json"</span> \
+  <span class="code-flag">--data</span> <span class="code-string">'{"filename":"photo.jpg","size":12345,"contentType":"image/jpeg","preferredPartSize":5242880}'</span>
+
+<span class="code-comment"># 2) 对 prepare 返回的 uploadUrl 或 parts[].uploadUrl 执行 PUT</span>
+<span class="code-comment"># 3) 完成后仅用 id 调 complete。若返回 missingParts，只重传缺失分片即可。</span>
+<span class="code-keyword">curl</span> <span class="code-flag">-X POST</span> <span class="code-string">"https://www.okfile.com/api/upload/complete"</span> \
+  <span class="code-flag">-H</span> <span class="code-string">"Content-Type: application/json"</span> \
+  <span class="code-flag">--data</span> <span class="code-string">'{"id":"a3k7m92x"}'</span>
+
+<span class="code-comment"># 可选：用 status 查询分片进度</span>
+<span class="code-keyword">curl</span> <span class="code-string">"https://www.okfile.com/api/upload/status/a3k7m92x"</span></code></pre>
+  </div>
+
+  <!-- POST Upload -->
+  <div class="code-block">
+    <div class="code-header">
+      <span class="label"><span class="method method-post">POST</span>&nbsp;/api/upload/prepare</span>
+      <button onclick="cpCode(this)"><span class="zh">复制</span><span class="en">Copy</span></button>
+    </div>
+    <pre><code><span class="code-comment"># 1) 申请单传或分片上载地址；多文件任务可并行调用</span>
+<span class="code-keyword">curl</span> <span class="code-flag">-X POST</span> <span class="code-string">"https://www.okfile.com/api/upload/prepare"</span> \
+  <span class="code-flag">-H</span> <span class="code-string">"Content-Type: application/json"</span> \
+  <span class="code-flag">--data</span> <span class="code-string">'{"filename":"photo.jpg","size":12345,"contentType":"image/jpeg","preferredPartSize":5242880,"apiKey":"okf_..."}'</span>
+
+<span class="code-comment"># 响应:</span>
+{
+  <span class="code-string">"success"</span>: true,
+  <span class="code-string">"id"</span>: <span class="code-string">"a3k7m92x"</span>,
+  <span class="code-string">"mode"</span>: <span class="code-string">"single"</span>,
+  <span class="code-string">"uploadUrl"</span>: <span class="code-url">"https://...r2.cloudflarestorage.com/okfile-files/a3k7m92x?X-Amz-..."</span>,
+  <span class="code-string">"url"</span>: <span class="code-url">"https://www.okfile.com/i/a3k7m92x"</span>,
+  <span class="code-string">"playUrl"</span>: <span class="code-url">"https://www.okfile.com/i/a3k7m92x?play=1"</span>,
+  <span class="code-string">"type"</span>: <span class="code-string">"image"</span>
+}</code></pre>
+  </div>
+
+  <div class="code-block">
+    <div class="code-header">
+      <span class="label"><span class="method">PUT</span>&nbsp;uploadUrl / parts[].uploadUrl</span>
+    </div>
+    <pre><code><span class="code-comment"># 2) 对 prepare 返回的 uploadUrl 执行 PUT</span>
+<span class="code-comment"># 单文件模式：PUT 一次即可</span>
+<span class="code-keyword">curl</span> <span class="code-flag">-X PUT</span> <span class="code-string">"$uploadUrl"</span> \
+  <span class="code-flag">-H</span> <span class="code-string">"Content-Type: image/jpeg"</span> \
+  <span class="code-flag">-H</span> <span class="code-string">"Content-Length: 12345"</span> \
+  <span class="code-flag">--data-binary</span> <span class="code-string">"@photo.jpg"</span>
+
+<span class="code-comment"># 分片模式：对每个 parts[i].uploadUrl 分别 PUT</span>
+<span class="code-comment"># 多文件任务可并行执行多个 PUT</span></code></pre>
+  </div>
+
+  <div class="code-block">
+    <div class="code-header">
+      <span class="label"><span class="method method-post">POST</span>&nbsp;/api/upload/complete</span>
+    </div>
+    <pre><code><span class="code-comment"># 3) 上载完成后确认</span>
+<span class="code-comment"># 单文件和分片模式都只需要 id</span>
+<span class="code-keyword">curl</span> <span class="code-flag">-X POST</span> <span class="code-string">"https://www.okfile.com/api/upload/complete"</span> \
+  <span class="code-flag">-H</span> <span class="code-string">"Content-Type: application/json"</span> \
+  <span class="code-flag">--data</span> <span class="code-string">'{"id":"a3k7m92x"}'</span>
+
+<span class="code-comment"># 分片模式下，后台会自动查询已上载分片并完成合并</span>
+<span class="code-comment"># 若分片不完整，将返回 HTTP 409 及 missingParts 数组，客户端可据此重试</span></code></pre>
+  </div>
+
+  <div class="code-block">
+    <div class="code-header">
+      <span class="label"><span class="method method-get">GET</span>&nbsp;/api/upload/status/{id}</span>
+      <button onclick="cpCode(this)"><span class="zh">复制</span><span class="en">Copy</span></button>
+    </div>
+    <pre><code><span class="code-comment"># 查询上载状态与进度</span>
+<span class="code-keyword">curl</span> <span class="code-string">"https://www.okfile.com/api/upload/status/a3k7m92x"</span>
+
+<span class="code-comment"># 响应:</span>
+{
+  <span class="code-string">"id"</span>: <span class="code-string">"a3k7m92x"</span>,
+  <span class="code-string">"status"</span>: <span class="code-string">"uploading"</span>,
+  <span class="code-string">"progress"</span>: <span class="code-string">"45/50"</span>,
+  <span class="code-string">"uploadedParts"</span>: 45,
+  <span class="code-string">"totalParts"</span>: 50,
+  <span class="code-string">"bytesReceived"</span>: 471859200
+}</code></pre>
+  </div>
+
+  <!-- GET View -->
+  <div class="code-block">
+    <div class="code-header">
+      <span class="label"><span class="method method-get">GET</span>&nbsp;/i/{id} — <span class="zh">默认直链</span><span class="en">Default Direct Link</span></span>
+    </div>
+    <pre><code><span class="code-comment"># 返回 HTML 页面：</span>
+<span class="code-comment"># 直接访问即返回原始文件：</span>
+<span class="code-url">https://www.okfile.com/i/a3k7m92x</span>
+
+<span class="code-comment"># 加 ?play=1 进入在线预览/播放页</span>
+<span class="code-url">https://www.okfile.com/i/a3k7m92x?play=1</span></code></pre>
+  </div>
+
+  <!-- Endpoint Summary -->
+  <table style="margin-top:24px">
+    <tr><th><span class="zh">方法</span><span class="en">Method</span></th><th><span class="zh">端点</span><span class="en">Endpoint</span></th><th><span class="zh">说明</span><span class="en">Description</span></th></tr>
+    <tr><td><span class="method method-post">POST</span></td><td><code>/api/upload/prepare</code></td><td><span class="zh">申请单传或分片上载地址；可选携带 `apiKey` 和 `preferredPartSize`，返回 {mode, uploadUrl/parts, id, url, playUrl, type}</span><span class="en">Request single/multipart upload URL; optionally carry `apiKey` and `preferredPartSize`, returns {mode, uploadUrl/parts, id, url, playUrl, type}</span></td></tr>
+    <tr><td><span class="method">PUT</span></td><td><code>uploadUrl / parts[].uploadUrl</code></td><td><span class="zh">把文件内容或分片直接写入 prepare 返回的动态上载地址</span><span class="en">Write file content or part directly to dynamic upload URL returned by prepare</span></td></tr>
+    <tr><td><span class="method method-post">POST</span></td><td><code>/api/upload/complete</code></td><td><span class="zh">确认文件已上载；单传和分片都只需 id，分片由后台自动合并</span><span class="en">Confirm file uploaded; both modes only need id, multipart merged automatically by backend</span></td></tr>
+    <tr><td><span class="method method-get">GET</span></td><td><code>/api/upload/status/{id}</code></td><td><span class="zh">查询分片上载任务的进度与状态</span><span class="en">Query progress and status of a multipart upload task</span></td></tr>
+    <tr><td><span class="method method-get">GET</span></td><td><code>/i/{id}</code></td><td><span class="zh">默认文件直链，直接返回原始文件</span><span class="en">Default file direct link, returns original file directly</span></td></tr>
+    <tr><td><span class="method method-get">GET</span></td><td><code>/i/{id}?play=1</code></td><td><span class="zh">预览/播放页面（图片、视频、PDF）</span><span class="en">Preview/Playback page (Image, Video, PDF)</span></td></tr>
+  </table>
+</section>
+
+<!-- Footer -->
+<footer>
+  <p><strong style="color:#fff">OkFile</strong> &middot; Agent-first file publish service</p>
+  <p style="margin-top:6px">Skill version 7.1.0 &middot; Anonymous upload + API Key publish</p>
+</footer>
+
+<script>
+// i18n logic
+const langToggle = document.getElementById('langToggle');
+let currentLang = localStorage.getItem('okfile_lang') || 'zh-CN';
+document.documentElement.setAttribute('lang', currentLang);
+langToggle.textContent = currentLang === 'zh-CN' ? 'EN' : '中';
+
+function updateMeta() {
+  const title = document.querySelector('title');
+  const meta = document.getElementById('metaDesc');
+  if (currentLang === 'en') {
+    title.textContent = 'OkFile — Agent-First File Upload and Publish Service';
+    meta.content = 'OkFile provides file upload and publish capabilities primarily for Agents, supporting anonymous access, parallel uploads, email login, API Keys, direct links, and preview URLs. The manual upload page is retained as an auxiliary entry.';
+  } else {
+    title.textContent = 'OkFile — 面向 Agent 的文件上载与发布服务';
+    meta.content = 'OkFile 主要为 Agent 提供文件上载与发布能力，支持匿名调用、API Key、分片上载、缺失分片重试、状态查询、直链返回和预览链接。人工上载页面作为辅助入口保留。';
+  }
+}
+updateMeta();
+
+langToggle.addEventListener('click', (e) => {
+  e.preventDefault();
+  currentLang = currentLang === 'zh-CN' ? 'en' : 'zh-CN';
+  document.documentElement.setAttribute('lang', currentLang);
+  localStorage.setItem('okfile_lang', currentLang);
+  langToggle.textContent = currentLang === 'zh-CN' ? 'EN' : '中';
+  updateMeta();
+});
+
+function cpCode(btn) {
+  const block = btn.closest('.code-block');
+  const text = block.querySelector('code').textContent;
+  navigator.clipboard.writeText(text).then(() => {
+    const originalHtml = btn.innerHTML;
+    btn.innerHTML = currentLang === 'en' ? 'Copied!' : '已复制!';
+    setTimeout(() => btn.innerHTML = originalHtml, 1500);
+  });
+}
+
+// Smooth scroll for nav links
+document.querySelectorAll('.nav a[href^="#"]').forEach(a => {
+  a.onclick = e => {
+    e.preventDefault();
+    document.querySelector(a.getAttribute('href')).scrollIntoView({behavior:'smooth'});
+  };
+});
+</script>
+</body>
+</html>

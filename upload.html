@@ -1,0 +1,704 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OkFile - 人工上载</title>
+<meta name="description" id="metaDesc" content="OkFile 人工上载页面，支持图片、视频、PDF 和常见文件，单文件最大 500MB。对 Agent 而言，仍推荐优先使用 API 接入。">
+<meta name="robots" content="noindex,follow">
+<meta name="theme-color" content="#0a0a0a">
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:-apple-system,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;background:#0a0a0a;color:#e0e0e0;min-height:100vh;display:flex;flex-direction:column;align-items:center}
+  .header{width:100%;max-width:720px;padding:32px 24px 0;text-align:center}
+  .top-links{display:flex;justify-content:center;gap:10px;flex-wrap:wrap;margin-bottom:16px}
+  .top-links a{padding:8px 14px;border-radius:999px;border:1px solid #2b2b2b;color:#aaa;text-decoration:none;font-size:12px}
+  .top-links a:hover{border-color:#2563eb;color:#fff}
+  .header h1{font-size:28px;font-weight:700;color:#fff;margin-bottom:8px}.header h1 span{color:#2563eb}
+  .header p{font-size:14px;color:#666}
+  /* Dropzone */
+  .dropzone{width:100%;max-width:720px;margin-top:24px;border:2px dashed #333;border-radius:16px;padding:48px 24px;text-align:center;cursor:pointer;transition:.3s;background:#111;display:block;touch-action:manipulation}
+  .dropzone:hover,.dropzone.dragover{border-color:#2563eb;background:rgba(37,99,235,.05)}
+  .dropzone.has-files{padding:24px;text-align:left}
+  .dropzone .icon{width:48px;height:48px;margin:0 auto 12px;border-radius:50%;background:#1a1a1a;display:flex;align-items:center;justify-content:center;font-size:22px;color:#2563eb}
+  .dropzone.has-files .icon{margin:0 0 12px}
+  .dropzone .label{font-size:15px;color:#aaa}.dropzone .label em{color:#2563eb;font-style:normal;cursor:pointer}
+  .dropzone .hint{font-size:12px;color:#555;margin-top:6px}
+  .selected-summary{display:none;margin-top:14px;padding-top:12px;border-top:1px solid #242424}
+  .selected-summary.show{display:block}
+  .selected-summary .summary-title{font-size:12px;color:#b6c2d0;margin-bottom:8px}
+  .selected-summary .summary-list{display:flex;flex-direction:column;gap:6px}
+  .selected-summary .summary-item{font-size:13px;color:#e5e7eb;word-break:break-all}
+  .native-file-input{position:absolute;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none}
+
+  /* File list */
+  .file-list{width:100%;max-width:720px;margin-top:16px;display:none}
+  .file-list.show{display:block}
+  .file-list-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+  .file-list-header .count{font-size:13px;color:#888}
+  .file-list-header .clear-btn{font-size:12px;color:#ef4444;cursor:pointer;background:none;border:none;opacity:.7;transition:.2s}
+  .file-list-header .clear-btn:hover{opacity:1}
+  .file-item{display:flex;align-items:center;gap:12px;padding:10px 14px;background:#141414;border:1px solid #222;border-radius:10px;margin-bottom:8px;transition:.2s}
+  .file-item:hover{border-color:#333}
+  .file-item .thumb{width:48px;height:48px;border-radius:6px;object-fit:contain;background:#0a0a0a;flex-shrink:0}
+  .file-item video.thumb{object-fit:cover}
+  .file-item .info{flex:1;min-width:0}
+  .file-item .name{font-size:13px;color:#ccc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .file-item .size{font-size:11px;color:#555;margin-top:2px}
+  .file-item .status{font-size:11px;width:72px;text-align:right;flex-shrink:0}
+  .item-status.waiting{color:#666}
+  .item-status.uploading{color:#f59e0b}
+  .item-status.done{color:#16a34a}
+  .item-status.error{color:#ef4444}
+  .file-item .remove{background:none;border:none;color:#555;cursor:pointer;font-size:16px;padding:4px;flex-shrink:0;transition:.15s;line-height:1}
+  .file-item .remove:hover{color:#ef4444}
+  .progress-bar{height:3px;background:#222;border-radius:2px;overflow:hidden;margin-top:6px}
+  .progress-bar .fill{height:100%;background:#2563eb;width:0;transition:.15s;border-radius:2px}
+
+  /* Actions bar */
+  .actions-bar{width:100%;max-width:720px;margin-top:16px;display:none}
+  .actions-bar.show{display:flex;gap:10px;justify-content:center}
+  .actions-bar button{padding:10px 28px;border-radius:10px;font-size:14px;cursor:pointer;transition:.2s;font-weight:500}
+  .btn-upload{background:#2563eb;color:#fff;border:none}
+  .btn-upload:hover{background:#1d4ed8}
+  .btn-upload:disabled{background:#333;color:#666;cursor:not-allowed}
+  .btn-clear{background:transparent;border:1px solid #333;color:#888}
+  .btn-clear:hover{border-color:#555;color:#aaa}
+
+  /* Error */
+  .error{width:100%;max-width:720px;color:#ef4444;font-size:13px;text-align:center;margin-top:12px;display:none}
+  .error.show{display:block}
+
+  /* Results grid */
+  .results{width:100%;max-width:720px;margin-top:20px;display:none}
+  .results.show{display:block}
+  .results .header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
+  .results .header h3{font-size:16px;color:#fff}
+  .results .header .copy-all{padding:7px 16px;border-radius:8px;background:#2563eb;color:#fff;border:none;font-size:12px;cursor:pointer;transition:.2s}
+  .results .header .copy-all:hover{background:#1d4ed8}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px}
+  .result-card{background:#141414;border:1px solid #222;border-radius:12px;overflow:hidden;transition:.2s}
+  .result-card:hover{border-color:#333}
+  .result-card .thumb-wrap{text-align:center;background:#0a0a0a;position:relative;padding:8px}
+  .result-card .thumb-wrap img{max-width:100%;max-height:160px;object-fit:contain;border-radius:6px}
+  .result-card .thumb-wrap video{max-width:100%;max-height:160px;border-radius:6px;background:#000}
+  .type-tag{position:absolute;top:10px;left:10px;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:600}
+  .type-tag.img{background:rgba(37,99,235,.2);color:#60a5fa}
+  .type-tag.vid{background:rgba(239,68,68,.15);color:#f87171}
+  .result-card .body{padding:10px 12px}
+  .result-card .link{font-size:11px;color:#2563eb;word-break:break-all;font-family:'SF Mono',Consolas,monospace;margin-bottom:8px;line-height:1.4}
+  .result-card .sub-link{font-size:11px;color:#7dd3fc;word-break:break-all;font-family:'SF Mono',Consolas,monospace;margin-top:-2px;margin-bottom:8px;line-height:1.4}
+  .link-actions{display:flex;gap:6px}
+  .link-actions button{flex:1;padding:5px 0;border-radius:6px;font-size:11px;cursor:pointer;transition:.15s}
+  .cp-btn{background:#1a1a1a;border:1px solid #333;color:#aaa}
+  .cp-btn:hover{border-color:#555;color:#fff}
+  .open-btn{background:transparent;border:1px solid #333;color:#888}
+  .open-btn:hover{border-color:#555;color:#fff}
+
+  /* Footer & Toast */
+  .footer-info{margin-top:auto;padding:24px;font-size:12px;color:#444;text-align:center}
+  .footer-info a{color:#2563eb;text-decoration:none}
+  .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);padding:12px 24px;background:#16a34a;color:#fff;border-radius:8px;font-size:14px;opacity:0;transition:.3s;pointer-events:none;z-index:100}
+  .toast.show{opacity:1}
+  /* i18n classes */
+  html[lang="en"] .zh { display: none !important; }
+  html[lang="zh-CN"] .en { display: none !important; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="top-links">
+    <a href="/"><span class="zh">返回首页</span><span class="en">Home</span></a>
+    <a href="/account"><span class="zh">注册 / 登录 / API Key</span><span class="en">Register / Login / API Key</span></a>
+    <a href="#" id="langToggle" style="font-weight:bold;color:#aaa;">EN</a>
+  </div>
+  <h1>Ok<span>File</span></h1>
+  <p id="headerDesc"><span class="zh">匿名文件上载，即刻分享 &middot; 支持批量上载 / 分片上载 &middot; 单文件最大</span><span class="en">Anonymous upload, instant sharing &middot; Batch / Multipart support &middot; Max file size</span> <strong style="color:#2563eb" class="max-size-label">500MB</strong></p>
+</div>
+
+<!-- Dropzone -->
+<label class="dropzone" id="dz" for="fi">
+  <div class="icon">&#8679;</div>
+  <div class="label"><span class="zh">拖拽文件到这里，或 <em>点击选择</em></span><span class="en">Drag and drop files here, or <em>click to select</em></span></div>
+  <div class="hint" id="dzHint">
+    <span class="zh">支持图片 / 视频 / PDF / 常见文件，单文件最大 <span class="max-size-label">500MB</span></span>
+    <span class="en">Supports images / videos / PDFs / common files. Max file size <span class="max-size-label">500MB</span>. Auto-chunks if exceeded.</span>
+  </div>
+  <div class="selected-summary" id="selectedSummary" aria-live="polite"></div>
+</label>
+<input type="file" id="fi" class="native-file-input" multiple>
+
+<!-- File List -->
+<div class="file-list" id="fl">
+  <div class="file-list-header">
+    <span class="count" id="fc">0 个文件</span>
+    <button class="clear-btn" onclick="clearFiles()"><span class="zh">清空列表</span><span class="en">Clear List</span></button>
+  </div>
+  <div id="fiList"></div>
+</div>
+
+<!-- Actions -->
+<div class="actions-bar" id="ab">
+  <button type="button" class="btn-upload" id="upBtn">&#9653; <span class="btn-text"><span class="zh">开始上载</span><span class="en">Start Upload</span></span> (<span id="uc">0</span>)</button>
+  <button class="btn-clear" onclick="clearFiles()"><span class="zh">清空重新选择</span><span class="en">Clear and Reselect</span></button>
+</div>
+
+<div class="error" id="err"></div>
+
+<!-- Results -->
+<div class="results" id="res">
+  <div class="header">
+    <h3>&#10004; <span class="zh">上载完成</span><span class="en">Upload Complete</span></h3>
+    <button class="copy-all" onclick="copyAllLinks()"><span class="zh">复制全部链接</span><span class="en">Copy All Links</span></button>
+  </div>
+  <div class="grid" id="grid"></div>
+</div>
+
+<div class="footer-info">Powered by OkFile &middot; Manual Upload &middot; V1.0</div>
+<div class="toast" id="ts"></div>
+
+<script>
+// ── i18n ──
+let currentLang = localStorage.getItem('okfile_lang') || 'zh-CN';
+document.documentElement.setAttribute('lang', currentLang);
+
+const t = {
+  'en': {
+    title: 'OkFile - Manual Upload',
+    exceeds: 'exceeds limit',
+    waiting: 'Wait',
+    done: 'Done',
+    error: 'Error',
+    uploading: 'Uploading...',
+    allDone: 'All Done',
+    copyAll: 'All links copied!',
+    copied: 'Copied!',
+    copyLink: 'Copy Link',
+    copyDirect: 'Copy Direct',
+    preview: 'Preview',
+    uploadFail: 'Upload failed',
+    netErr: 'Network error',
+    noUrl: 'No valid upload URL returned',
+    fileWord: 'files',
+    startUpload: 'Start Upload'
+  },
+  'zh-CN': {
+    title: 'OkFile - 人工上载',
+    exceeds: '超过限制',
+    waiting: '等待',
+    done: '完成',
+    error: '失败',
+    uploading: '上载中...',
+    allDone: '全部完成',
+    copyAll: '全部直链已复制!',
+    copied: '已复制!',
+    copyLink: '复制链接',
+    copyDirect: '复制直链',
+    preview: '预览/播放',
+    uploadFail: '上载失败',
+    netErr: '网络错误',
+    noUrl: '服务端未返回可用上载地址',
+    fileWord: '个文件',
+    startUpload: '开始上载'
+  }
+};
+function _t(key) { return t[currentLang][key]; }
+
+const langToggle = document.getElementById('langToggle');
+
+// ── State ──
+let pendingFiles = []; // { file, thumbUrl, status, progress, result, fileType, uid }
+let uploadConfig = {
+  maxSize: 500 * 1024 * 1024,
+  multipartThreshold: 25 * 1024 * 1024,
+  partSize: 10 * 1024 * 1024
+};
+const MULTIPART_UPLOAD_CONCURRENCY = 3;
+
+langToggle.textContent = currentLang === 'zh-CN' ? 'EN' : '中';
+
+function applyLangToJS() {
+  document.title = _t('title');
+  if(pendingFiles.length) {
+    document.getElementById('fc').textContent = `${pendingFiles.length} ${_t('fileWord')}`;
+  }
+  
+  const upBtn = document.getElementById('upBtn');
+  if (upBtn.disabled) {
+    upBtn.innerHTML = _t('uploading');
+  } else {
+    const isAllDone = pendingFiles.length > 0 && pendingFiles.every(f => f.status === 'done');
+    const text = isAllDone ? _t('allDone') : _t('startUpload');
+    upBtn.innerHTML = `&#9653; <span class="btn-text">${text}</span> (<span id="uc">${pendingFiles.length}</span>)`;
+  }
+}
+applyLangToJS();
+
+langToggle.addEventListener('click', (e) => {
+  e.preventDefault();
+  currentLang = currentLang === 'zh-CN' ? 'en' : 'zh-CN';
+  document.documentElement.setAttribute('lang', currentLang);
+  localStorage.setItem('okfile_lang', currentLang);
+  langToggle.textContent = currentLang === 'zh-CN' ? 'EN' : '中';
+  applyLangToJS();
+  renderFileList();
+  showResults();
+});
+
+const API = location.origin;
+const $ = id => document.getElementById(id);
+const dz=$('dz'), fi=$('fi'), fl=$('fl'), fc=$('fc'), fiList=$('fiList');
+const ab=$('ab'), upBtn=$('upBtn');
+const err=$('err'), res=$('res'), grid=$('grid'), ts=$('ts');
+const selectedSummary = $('selectedSummary');
+
+if (upBtn) {
+  upBtn.addEventListener('click', () => {
+    uploadAll();
+  });
+}
+
+let MAX_SIZE = uploadConfig.maxSize;
+
+// ── Dropzone events ──
+dz.ondragover = e => { e.preventDefault(); dz.classList.add('dragover') };
+dz.ondragleave = () => dz.classList.remove('dragover');
+dz.ondrop = e => {
+  e.preventDefault(); dz.classList.remove('dragover');
+  if (e.dataTransfer.files.length) addFiles(e.dataTransfer.files);
+};
+
+function handleSelectedFiles() {
+  const files = Array.from(fi.files || []);
+  if (!files.length) return;
+  addFiles(files);
+}
+
+fi.addEventListener('change', () => {
+  window.setTimeout(handleSelectedFiles, 0);
+});
+
+fi.addEventListener('input', () => {
+  window.setTimeout(handleSelectedFiles, 0);
+});
+
+function addFiles(fileList) {
+  err.classList.remove('show');
+  res.classList.remove('show');
+  for (const f of fileList) {
+    if (f.size > MAX_SIZE) {
+      showErr(`${f.name} ${_t('exceeds')} ${Math.round(MAX_SIZE/1024/1024)}MB (${(f.size/1024/1024).toFixed(1)}MB)`);
+      continue;
+    }
+    const detectedType = String(f.type || '');
+    const isVideo = detectedType.startsWith('video/');
+    const isImage = detectedType.startsWith('image/');
+    const item = {
+      file: f,
+      thumbUrl: '',
+      status: 'waiting',
+      progress: 0,
+      result: null,
+      fileType: isVideo ? 'video' : (isImage ? 'image' : 'file'),
+      uid: 'uid_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7)
+    };
+    if (isVideo || isImage) {
+      item.thumbUrl = URL.createObjectURL(f);
+    }
+    pendingFiles.push(item);
+  }
+  renderFileList();
+  applyLangToJS();
+  fi.value = '';
+}
+
+function removeFile(uid) {
+  pendingFiles = pendingFiles.filter(f => f.uid !== uid);
+  renderFileList();
+  applyLangToJS();
+}
+
+function clearFiles() {
+  pendingFiles = [];
+  renderFileList();
+  applyLangToJS();
+  res.classList.remove('show');
+  grid.innerHTML = '';
+  err.classList.remove('show');
+}
+
+function renderFileList() {
+  if (!pendingFiles.length) {
+    fl.classList.remove('show'); ab.classList.remove('show');
+    fl.style.display = 'none';
+    ab.style.display = 'none';
+    dz.classList.remove('has-files');
+    selectedSummary.classList.remove('show');
+    selectedSummary.innerHTML = '';
+    dz.style.display = 'block';
+    return;
+  }
+
+  fl.classList.add('show'); ab.classList.add('show');
+  fl.style.display = 'block';
+  ab.style.display = 'flex';
+  dz.classList.add('has-files');
+  dz.style.display = 'block';
+  fc.textContent = `${pendingFiles.length} ${_t('fileWord')}`;
+  selectedSummary.classList.add('show');
+  selectedSummary.innerHTML = `
+    <div class="summary-title">${currentLang === 'zh-CN' ? '已选择文件' : 'Selected files'}</div>
+    <div class="summary-list">${pendingFiles.map(item => `<div class="summary-item">${escHTML(item.file.name)}</div>`).join('')}</div>
+  `;
+
+  fiList.innerHTML = '';
+  for (const item of pendingFiles) {
+    const row = document.createElement('div');
+    row.className = 'file-item';
+    row.dataset.uid = item.uid;
+
+    let stText, stClass;
+    switch(item.status) {
+      case 'waiting':   stText=_t('waiting'); stClass='waiting'; break;
+      case 'uploading': stText=`${item.progress}%`; stClass='uploading'; break;
+      case 'done':      stText=_t('done'); stClass='done'; break;
+      default:          stText=_t('error'); stClass='error'; break;
+    }
+
+    let mediaNode;
+    if (item.fileType === 'video' && item.thumbUrl) {
+      mediaNode = document.createElement('video');
+      mediaNode.className = 'thumb';
+      mediaNode.src = item.thumbUrl;
+      mediaNode.preload = 'metadata';
+      mediaNode.muted = true;
+    } else if (item.fileType === 'image' && item.thumbUrl) {
+      mediaNode = document.createElement('img');
+      mediaNode.className = 'thumb';
+      mediaNode.src = item.thumbUrl;
+      mediaNode.alt = '';
+    } else {
+      mediaNode = document.createElement('div');
+      mediaNode.className = 'thumb';
+      mediaNode.style.display = 'flex';
+      mediaNode.style.alignItems = 'center';
+      mediaNode.style.justifyContent = 'center';
+      mediaNode.style.color = '#666';
+      mediaNode.style.fontSize = '18px';
+      mediaNode.textContent = 'FILE';
+    }
+
+    const info = document.createElement('div');
+    info.className = 'info';
+    const name = document.createElement('div');
+    name.className = 'name';
+    name.textContent = item.file.name;
+    const size = document.createElement('div');
+    size.className = 'size';
+    size.textContent = fmtSize(item.file.size) + (item.status === 'done' && item.result ? ` · ${item.result.type.toUpperCase()}` : '');
+    info.appendChild(name);
+    info.appendChild(size);
+
+    if (item.status === 'uploading') {
+      const progressBar = document.createElement('div');
+      progressBar.className = 'progress-bar';
+      const fill = document.createElement('div');
+      fill.className = 'fill';
+      fill.style.width = `${item.progress}%`;
+      progressBar.appendChild(fill);
+      info.appendChild(progressBar);
+    }
+
+    const status = document.createElement('div');
+    status.className = `status item-status ${stClass}`;
+    status.textContent = stText;
+
+    row.appendChild(mediaNode);
+    row.appendChild(info);
+    row.appendChild(status);
+
+    if (item.status !== 'uploading') {
+      const removeBtn = document.createElement('button');
+      removeBtn.className = 'remove';
+      removeBtn.type = 'button';
+      removeBtn.textContent = '\u00D7';
+      removeBtn.addEventListener('click', () => removeFile(item.uid));
+      row.appendChild(removeBtn);
+    }
+
+    fiList.appendChild(row);
+  }
+}
+
+// ══════════════════════════════════════════════
+// Upload Engine — Presigned PUT to R2
+// ══════════════════════════════════════════════
+async function loadUploadConfig() {
+  try {
+    const res = await fetch(API + '/api/upload/config');
+    const data = await res.json();
+    if (!res.ok || !(data && data.success)) return;
+    uploadConfig = data;
+    MAX_SIZE = data.maxSize || MAX_SIZE;
+    const maxLabel = `${Math.round(MAX_SIZE / 1024 / 1024)}MB`;
+    document.querySelectorAll('.max-size-label').forEach(el => el.textContent = maxLabel);
+  } catch (_) {}
+}
+
+function updateItemProgress(item, progress) {
+  item.progress = Math.max(0, Math.min(100, progress));
+  const el = document.querySelector(`[data-uid="${item.uid}"] .fill`);
+  if (el) el.style.width = item.progress + '%';
+  const stEl = document.querySelector(`[data-uid="${item.uid}"] .status`);
+  if (stEl) stEl.textContent = `${item.progress}%`;
+}
+
+function uploadBlobWithProgress(url, blob, onProgress) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('PUT', url);
+    xhr.upload.onprogress = e => {
+      if (e.lengthComputable && typeof onProgress === 'function') onProgress(e.loaded, e.total);
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(xhr.getResponseHeader('ETag') || '');
+      } else {
+        reject(new Error(`Upload failed to R2: HTTP ${xhr.status}`));
+      }
+    };
+    xhr.onerror = () => reject(new Error(_t('netErr')));
+    xhr.send(blob);
+  });
+}
+
+async function uploadMultipart(item, prepareData, missingParts = null) {
+  const totalParts = Number(prepareData.totalParts || prepareData.parts.length || 0);
+  const partsToUpload = missingParts 
+    ? prepareData.parts.filter(p => missingParts.includes(p.partNumber))
+    : prepareData.parts;
+  const totalBytes = partsToUpload.reduce((sum, part) => {
+    const start = (part.partNumber - 1) * prepareData.partSize;
+    const end = Math.min(start + prepareData.partSize, item.file.size);
+    return sum + Math.max(end - start, 0);
+  }, 0);
+  const loadedBytesByPart = new Map();
+  const progressStart = missingParts ? 90 : 0;
+  const progressSpan = missingParts ? 5 : 95;
+  let nextIndex = 0;
+
+  function syncMultipartProgress() {
+    const loadedBytes = Array.from(loadedBytesByPart.values()).reduce((sum, value) => sum + value, 0);
+    const ratio = totalBytes > 0 ? Math.min(loadedBytes / totalBytes, 1) : 1;
+    updateItemProgress(item, Math.round(progressStart + progressSpan * ratio));
+  }
+
+  async function uploadPart(part) {
+    const start = (part.partNumber - 1) * prepareData.partSize;
+    const end = Math.min(start + prepareData.partSize, item.file.size);
+    const chunk = item.file.slice(start, end);
+    loadedBytesByPart.set(part.partNumber, 0);
+    syncMultipartProgress();
+    const etag = await uploadBlobWithProgress(part.uploadUrl, chunk, (loaded) => {
+      loadedBytesByPart.set(part.partNumber, loaded);
+      syncMultipartProgress();
+    });
+    loadedBytesByPart.set(part.partNumber, chunk.size);
+    syncMultipartProgress();
+    return { partNumber: part.partNumber, etag };
+  }
+
+  async function worker() {
+    while (nextIndex < partsToUpload.length) {
+      const part = partsToUpload[nextIndex++];
+      await uploadPart(part);
+    }
+  }
+
+  const concurrency = Math.max(1, Math.min(MULTIPART_UPLOAD_CONCURRENCY, partsToUpload.length));
+  await Promise.all(Array.from({ length: concurrency }, () => worker()));
+  if (!missingParts) updateItemProgress(item, Math.max(item.progress, 95));
+}
+
+async function uploadAll() {
+  if (!pendingFiles.length) return;
+  upBtn.disabled = true;
+  upBtn.innerHTML = _t('uploading');
+
+  const CONCURRENCY = 3;
+  const queue = [...pendingFiles.filter(f => f.status !== 'done' && f.status !== 'error')];
+  let idx = 0;
+  let active = 0;
+
+  async function processNext() {
+    while (idx < queue.length && active < CONCURRENCY) {
+      const item = queue[idx++];
+      if (item.status === 'done' || item.status === 'error') continue;
+      active++;
+      await uploadOne(item);
+      active--;
+    }
+  }
+
+  const workers = [];
+  for (let i = 0; i < CONCURRENCY && i < queue.length; i++) {
+    workers.push(processNext());
+  }
+  await Promise.all(workers);
+
+  upBtn.disabled = false;
+  applyLangToJS();
+  showResults();
+}
+
+function uploadOne(item) {
+  return new Promise(async resolve => {
+    try {
+      item.status = 'uploading';
+      item.progress = 0;
+      renderFileList();
+
+      const prepareRes = await fetch(API + '/api/upload/prepare', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          filename: item.file.name,
+          size: item.file.size,
+          contentType: item.file.type || undefined
+        })
+      });
+
+      const prepareData = await prepareRes.json().catch(() => null);
+      if (!prepareRes.ok || !(prepareData && prepareData.success)) {
+        throw new Error((prepareData && prepareData.error) || `Upload prepare failed: HTTP ${prepareRes.status}`);
+      }
+
+      if (prepareData.mode === 'multipart') {
+        await uploadMultipart(item, prepareData);
+      } else if (prepareData.uploadUrl) {
+        await uploadBlobWithProgress(prepareData.uploadUrl, item.file, (loaded, total) => {
+          const ratio = total > 0 ? (loaded / total) : 0;
+          updateItemProgress(item, Math.round(95 * ratio));
+        });
+        updateItemProgress(item, 95);
+      } else {
+        throw new Error(_t('noUrl'));
+      }
+
+      let completeRes = await fetch(API + '/api/upload/complete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: prepareData.id })
+      });
+      let completeData = await completeRes.json().catch(() => null);
+
+      let retries = 0;
+      while (!completeRes.ok && completeData && completeData.missingParts && completeData.missingParts.length > 0 && retries < 3) {
+        retries++;
+        await uploadMultipart(item, prepareData, completeData.missingParts);
+        completeRes = await fetch(API + '/api/upload/complete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: prepareData.id })
+        });
+        completeData = await completeRes.json().catch(() => null);
+      }
+
+      if (!completeRes.ok || !(completeData && completeData.success)) {
+        throw new Error((completeData && completeData.error) || `Confirm failed: HTTP ${completeRes.status}`);
+      }
+      item.result = completeData;
+
+      if (item.status !== 'error') {
+        item.status = 'done';
+        updateItemProgress(item, 100);
+      }
+
+      renderFileList();
+      resolve();
+
+    } catch(e) {
+      item.status = 'error';
+      showErr(e.message || `${_t('uploadFail')}: ` + item.file.name);
+      renderFileList();
+      resolve();
+    }
+  });
+}
+
+// ══════════════════════════════════════════════
+// Results Display
+// ══════════════════════════════════════════════
+function showResults() {
+  const done = pendingFiles.filter(f => f.status === 'done' && f.result);
+  if (!done.length) return;
+
+  res.classList.add('show');
+
+  grid.innerHTML = done.map(item => {
+    const r = item.result;
+    const isVid = r.type === 'video';
+    const isImg = r.type === 'image';
+    const isPdf = r.type === 'pdf';
+    const tagClass = isVid ? 'vid' : 'img';
+    const tagLabel = isVid ? 'VIDEO' : (isImg ? 'IMAGE' : (isPdf ? 'PDF' : 'FILE'));
+    const directUrl = r.url;
+    const previewUrl = r.playUrl || (r.url + '?play=1');
+
+    let media;
+    if (isVid) {
+      media = `<video src="${directUrl}" preload="metadata" muted playsinline controls style="max-width:100%;max-height:160px;border-radius:6px;background:#000"></video>`;
+    } else if (isImg) {
+      media = `<img src="${directUrl}" alt="" style="max-width:100%;max-height:160px;object-fit:contain;border-radius:6px;cursor:pointer" onclick="window.open('${previewUrl}','_blank')">`;
+    } else {
+      media = `<div style="height:160px;display:flex;align-items:center;justify-content:center;color:#888;font-size:18px;background:#0a0a0a;border-radius:6px">${tagLabel}</div>`;
+    }
+
+    return `<div class="result-card">
+      <div class="thumb-wrap">${media}<span class="type-tag ${tagClass}">${tagLabel}</span></div>
+      <div class="body">
+      <div class="link" title="Direct Link">${directUrl}</div>
+      <div class="sub-link" title="Preview/Play Link">${previewUrl}</div>
+        <div class="link-actions">
+          <button class="cp-btn" onclick="cp('${directUrl}',this,'${_t('copyDirect')}')">${_t('copyDirect')}</button>
+          <button class="open-btn" onclick="window.open('${previewUrl}','_blank')">${_t('preview')}</button>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ══════════════════════════════════════════════
+// Utilities
+// ══════════════════════════════════════════════
+function cp(text, btn, resetLabel = _t('copyLink')) {
+  navigator.clipboard.writeText(text).then(() => {
+    showToast(_t('copied'));
+    if (btn) { btn.textContent = _t('copied'); setTimeout(() => btn.textContent = resetLabel, 1500); }
+  });
+}
+
+function copyAllLinks() {
+  const links = pendingFiles
+    .filter(f => f.status === 'done' && f.result)
+    .map(f => f.result.url)
+    .join('\n');
+  if (links) navigator.clipboard.writeText(links).then(() => showToast(_t('copyAll')));
+}
+
+function showErr(m) { err.textContent=m; err.classList.add('show'); setTimeout(()=>err.classList.remove('show'),4000); }
+function showToast(m) { ts.textContent=m; ts.classList.add('show'); setTimeout(()=>ts.classList.remove('show'),2000); }
+function escHTML(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+
+function fmtSize(b) {
+  if (b >= 1073741824) return (b/1073741824).toFixed(2)+' GB';
+  if (b >= 1048576) return (b/1048576).toFixed(2)+' MB';
+  if (b >= 1024) return (b/1024).toFixed(1)+' KB';
+  return b+' B';
+}
+
+loadUploadConfig();
+</script>
+</body>
+</html>
