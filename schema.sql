@@ -89,8 +89,10 @@ CREATE TABLE IF NOT EXISTS sites (
   expires_at TEXT,
   api_key_id TEXT,
   user_id TEXT,
+  active_release_id TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL,
-  completed_at TEXT
+  completed_at TEXT,
+  updated_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS site_files (
@@ -104,6 +106,37 @@ CREATE TABLE IF NOT EXISTS site_files (
   PRIMARY KEY (site_id, relative_path)
 );
 
+CREATE TABLE IF NOT EXISTS site_releases (
+  id TEXT PRIMARY KEY,
+  site_id TEXT NOT NULL,
+  version_no INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'ready',
+  publish_origin TEXT NOT NULL,
+  site_url TEXT NOT NULL,
+  site_hostname TEXT NOT NULL,
+  subdomain TEXT NOT NULL,
+  entry_path TEXT NOT NULL,
+  file_count INTEGER NOT NULL DEFAULT 0,
+  total_size INTEGER NOT NULL DEFAULT 0,
+  expires_at TEXT,
+  based_on_release_id TEXT,
+  change_summary TEXT,
+  created_at TEXT NOT NULL,
+  completed_at TEXT,
+  activated_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS site_release_files (
+  release_id TEXT NOT NULL,
+  relative_path TEXT NOT NULL,
+  file_id TEXT NOT NULL,
+  file_name TEXT NOT NULL,
+  content_type TEXT,
+  size INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (release_id, relative_path)
+);
+
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 CREATE INDEX IF NOT EXISTS idx_magic_links_user_id ON magic_links(user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
@@ -111,5 +144,8 @@ CREATE INDEX IF NOT EXISTS idx_api_keys_user_id ON api_keys(user_id);
 CREATE INDEX IF NOT EXISTS idx_published_files_created_at ON published_files(created_at);
 CREATE INDEX IF NOT EXISTS idx_sites_created_at ON sites(created_at);
 CREATE INDEX IF NOT EXISTS idx_site_files_file_id ON site_files(file_id);
+CREATE INDEX IF NOT EXISTS idx_site_releases_site_id ON site_releases(site_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_site_releases_site_version ON site_releases(site_id, version_no);
+CREATE INDEX IF NOT EXISTS idx_site_release_files_file_id ON site_release_files(file_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_sites_site_hostname ON sites(site_hostname);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_sites_subdomain ON sites(subdomain);

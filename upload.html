@@ -313,6 +313,24 @@ const selectedSummary = $('selectedSummary');
 const siteResultCard = $('siteResultCard');
 const pickFilesBtn = $('pickFilesBtn');
 const pickFolderBtn = $('pickFolderBtn');
+const pageParams = new URLSearchParams(location.search);
+const siteUpdateTargetId = /^st_[a-z0-9]+$/i.test(String(pageParams.get('siteId') || '').trim())
+  ? String(pageParams.get('siteId') || '').trim()
+  : '';
+const siteUpdateToken = String(pageParams.get('siteUpdateToken') || '').trim();
+
+if (siteUpdateTargetId) {
+  const noteHost = document.querySelector('.site-publish-note');
+  if (noteHost) {
+    const banner = document.createElement('div');
+    banner.className = 'site-result-note';
+    banner.style.marginTop = '10px';
+    banner.textContent = currentLang === 'zh-CN'
+      ? `当前正在更新已有站点：${siteUpdateTargetId}。请选择新的完整目录，上传完成后会原子切换到新版本。`
+      : `You are updating an existing site: ${siteUpdateTargetId}. Select the full new folder tree and OkFile will switch to the new release atomically after upload.`;
+    noteHost.appendChild(banner);
+  }
+}
 
 if (upBtn) {
   upBtn.addEventListener('click', () => {
@@ -729,6 +747,8 @@ async function uploadSiteBatch() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        siteId: siteUpdateTargetId || undefined,
+        siteUpdateToken: siteUpdateToken || undefined,
         siteName: guessSiteName(pendingFiles),
         entryPath: guessSiteEntryPath(pendingFiles),
         files: preparedSite.items.map(entry => ({
@@ -897,6 +917,9 @@ function renderSiteResult() {
   }
   if (siteUploadMeta && siteUploadMeta.hasNestedPaths) {
     notes.push(`<div class="site-result-note">${escHTML(_t('siteSubdirsReady'))}</div>`);
+  }
+  if (siteResult && siteResult.updateMode && siteResult.versionNo) {
+    notes.push(`<div class="site-result-note">${escHTML(currentLang === 'zh-CN' ? `已切换到站点版本 V${siteResult.versionNo}` : `Switched to site release V${siteResult.versionNo}`)}</div>`);
   }
   siteResultCard.classList.add('show');
   siteResultCard.innerHTML = `

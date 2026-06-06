@@ -24,6 +24,7 @@ const PUBLISH_DOMAIN_SETTING_KEY = 'publish_origin';
 const META_PREFIX = '__meta__/';
 const SESSION_PREFIX = '__upload_sessions__/';
 const SITE_SESSION_PREFIX = '__site_sessions__/';
+const SITE_UPDATE_TOKEN_PREFIX = '__site_update_tokens__/';
 const BUCKET_NAME = 'okfile-files';
 const SESSION_COOKIE = 'okfile_session';
 const BAIDU_VERIFY_PATH = '/baidu_verify_codeva-BoYaYTJN00.html';
@@ -552,6 +553,10 @@ function uploadSessionKey(id) {
 
 function siteSessionKey(id) {
   return `${SITE_SESSION_PREFIX}${id}.json`;
+}
+
+function siteUpdateTokenKey(token) {
+  return `${SITE_UPDATE_TOKEN_PREFIX}${token}.json`;
 }
 
 function sanitizeSiteName(name) {
@@ -1442,6 +1447,16 @@ async function deleteSiteSession(id, env) {
   await env.FILES.delete(siteSessionKey(id));
 }
 
+async function readSiteUpdateToken(token, env) {
+  if (!token) return null;
+  return readJsonObject(siteUpdateTokenKey(token), env);
+}
+
+async function deleteSiteUpdateToken(token, env) {
+  if (!token) return;
+  await env.FILES.delete(siteUpdateTokenKey(token));
+}
+
 async function readFileMeta(id, env) {
   const sidecar = await readSidecarMeta(id, env);
   const r2Object = await env.FILES.head(id);
@@ -2044,8 +2059,10 @@ async function ensureSitesTables(env) {
         expires_at TEXT,
         api_key_id TEXT,
         user_id TEXT,
+        active_release_id TEXT NOT NULL DEFAULT '',
         created_at TEXT NOT NULL,
-        completed_at TEXT
+        completed_at TEXT,
+        updated_at TEXT
       )`
     ),
     env.DB.prepare(
@@ -2059,11 +2076,46 @@ async function ensureSitesTables(env) {
         created_at TEXT NOT NULL,
         PRIMARY KEY (site_id, relative_path)
       )`
+    ),
+    env.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS site_releases (
+        id TEXT PRIMARY KEY,
+        site_id TEXT NOT NULL,
+        version_no INTEGER NOT NULL,
+        status TEXT NOT NULL DEFAULT 'ready',
+        publish_origin TEXT NOT NULL,
+        site_url TEXT NOT NULL,
+        site_hostname TEXT NOT NULL,
+        subdomain TEXT NOT NULL,
+        entry_path TEXT NOT NULL,
+        file_count INTEGER NOT NULL DEFAULT 0,
+        total_size INTEGER NOT NULL DEFAULT 0,
+        expires_at TEXT,
+        based_on_release_id TEXT,
+        change_summary TEXT,
+        created_at TEXT NOT NULL,
+        completed_at TEXT,
+        activated_at TEXT
+      )`
+    ),
+    env.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS site_release_files (
+        release_id TEXT NOT NULL,
+        relative_path TEXT NOT NULL,
+        file_id TEXT NOT NULL,
+        file_name TEXT NOT NULL,
+        content_type TEXT,
+        size INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (release_id, relative_path)
+      )`
     )
   ]);
   for (const statement of [
     'ALTER TABLE sites ADD COLUMN site_hostname TEXT NOT NULL DEFAULT ""',
-    'ALTER TABLE sites ADD COLUMN subdomain TEXT NOT NULL DEFAULT ""'
+    'ALTER TABLE sites ADD COLUMN subdomain TEXT NOT NULL DEFAULT ""',
+    'ALTER TABLE sites ADD COLUMN active_release_id TEXT NOT NULL DEFAULT ""',
+    'ALTER TABLE sites ADD COLUMN updated_at TEXT'
   ]) {
     try {
       await env.DB.prepare(statement).run();
@@ -2073,8 +2125,304 @@ async function ensureSitesTables(env) {
     env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_sites_created_at ON sites(created_at)'),
     env.DB.prepare('CREATE UNIQUE INDEX IF NOT EXISTS idx_sites_site_hostname ON sites(site_hostname)'),
     env.DB.prepare('CREATE UNIQUE INDEX IF NOT EXISTS idx_sites_subdomain ON sites(subdomain)'),
-    env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_site_files_file_id ON site_files(file_id)')
+    env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_site_files_file_id ON site_files(file_id)'),
+    env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_site_releases_site_id ON site_releases(site_id)'),
+    env.DB.prepare('CREATE UNIQUE INDEX IF NOT EXISTS idx_site_releases_site_version ON site_releases(site_id, version_no)'),
+    env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_site_release_files_file_id ON site_release_files(file_id)')
   ]);
+}
+
+function siteReleaseId() {
+  return `rel_${generateId(12)}`;
+}
+
+function parseChangeSummary(value) {
+  if (!value) return null;
+  if (typeof value === 'object') return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
+async function getNextSiteReleaseVersion(siteId, env) {
+  await ensureSitesTables(env);
+  const row = await env.DB.prepare(
+    'SELECT COALESCE(MAX(version_no), 0) AS version_no FROM site_releases WHERE site_id = ?'
+  ).bind(siteId).first();
+  return Number(row?.version_no || 0) + 1;
+}
+
+async function getSiteReleaseById(siteId, releaseId, env) {
+  await ensureSitesTables(env);
+  const item = await env.DB.prepare(
+    `SELECT
+        id, site_id, version_no, status, publish_origin, site_url, site_hostname, subdomain, entry_path,
+        file_count, total_size, expires_at, based_on_release_id, change_summary, created_at, completed_at, activated_at
+     FROM site_releases
+     WHERE site_id = ? AND id = ?`
+  ).bind(siteId, releaseId).first();
+  if (!item) return null;
+  return {
+    id: item.id,
+    siteId: item.site_id,
+    versionNo: Number(item.version_no || 0),
+    status: item.status || 'ready',
+    publishOrigin: item.publish_origin || '',
+    siteUrl: item.site_url || '',
+    siteHostname: item.site_hostname || '',
+    subdomain: item.subdomain || '',
+    entryPath: item.entry_path || '',
+    fileCount: Number(item.file_count || 0),
+    totalSize: Number(item.total_size || 0),
+    expiresAt: item.expires_at || null,
+    basedOnReleaseId: item.based_on_release_id || null,
+    changeSummary: parseChangeSummary(item.change_summary),
+    createdAt: item.created_at || null,
+    completedAt: item.completed_at || null,
+    activatedAt: item.activated_at || null
+  };
+}
+
+async function listSiteReleases(siteId, env, limit = 20) {
+  await ensureSitesTables(env);
+  const result = await env.DB.prepare(
+    `SELECT
+        id, site_id, version_no, status, publish_origin, site_url, site_hostname, subdomain, entry_path,
+        file_count, total_size, expires_at, based_on_release_id, change_summary, created_at, completed_at, activated_at
+     FROM site_releases
+     WHERE site_id = ?
+     ORDER BY version_no DESC
+     LIMIT ?`
+  ).bind(siteId, limit).all();
+  return (result.results || []).map((item) => ({
+    id: item.id,
+    siteId: item.site_id,
+    versionNo: Number(item.version_no || 0),
+    status: item.status || 'ready',
+    publishOrigin: item.publish_origin || '',
+    siteUrl: item.site_url || '',
+    siteHostname: item.site_hostname || '',
+    subdomain: item.subdomain || '',
+    entryPath: item.entry_path || '',
+    fileCount: Number(item.file_count || 0),
+    totalSize: Number(item.total_size || 0),
+    expiresAt: item.expires_at || null,
+    basedOnReleaseId: item.based_on_release_id || null,
+    changeSummary: parseChangeSummary(item.change_summary),
+    createdAt: item.created_at || null,
+    completedAt: item.completed_at || null,
+    activatedAt: item.activated_at || null
+  }));
+}
+
+async function listSiteReleaseFiles(releaseId, env) {
+  await ensureSitesTables(env);
+  const result = await env.DB.prepare(
+    `SELECT release_id, relative_path, file_id, file_name, content_type, size, created_at
+     FROM site_release_files
+     WHERE release_id = ?
+     ORDER BY relative_path ASC`
+  ).bind(releaseId).all();
+  return (result.results || []).map((item) => ({
+    releaseId: item.release_id,
+    relativePath: item.relative_path,
+    fileId: item.file_id,
+    fileName: item.file_name || '',
+    contentType: item.content_type || 'application/octet-stream',
+    size: Number(item.size || 0),
+    createdAt: item.created_at || null
+  }));
+}
+
+async function ensureSiteReleaseBackfill(siteId, env) {
+  await ensureSitesTables(env);
+  const site = await env.DB.prepare(
+    `SELECT
+        id, name, publish_origin, site_url, site_hostname, subdomain, entry_path, status, file_count, total_size, expires_at,
+        api_key_id, user_id, active_release_id, created_at, completed_at, updated_at
+     FROM sites WHERE id = ?`
+  ).bind(siteId).first();
+  if (!site) return null;
+  if (site.active_release_id) return site.active_release_id;
+
+  const existingRelease = await env.DB.prepare(
+    `SELECT id
+     FROM site_releases
+     WHERE site_id = ?
+     ORDER BY CASE WHEN status = 'active' THEN 0 ELSE 1 END, version_no DESC
+     LIMIT 1`
+  ).bind(siteId).first();
+  if (existingRelease?.id) {
+    await env.DB.prepare(
+      'UPDATE sites SET active_release_id = ?, updated_at = COALESCE(updated_at, ?) WHERE id = ?'
+    ).bind(existingRelease.id, site.updated_at || site.completed_at || site.created_at || new Date().toISOString(), siteId).run();
+    return existingRelease.id;
+  }
+
+  const filesResult = await env.DB.prepare(
+    `SELECT site_id, relative_path, file_id, file_name, content_type, size, created_at
+     FROM site_files
+     WHERE site_id = ?
+     ORDER BY relative_path ASC`
+  ).bind(siteId).all();
+  const files = filesResult.results || [];
+  if (!files.length) return null;
+
+  const now = new Date().toISOString();
+  const releaseId = siteReleaseId();
+  const createdAt = site.completed_at || site.created_at || now;
+  const completedAt = site.completed_at || createdAt;
+  const statements = [
+    env.DB.prepare(
+      `INSERT INTO site_releases (
+        id, site_id, version_no, status, publish_origin, site_url, site_hostname, subdomain, entry_path,
+        file_count, total_size, expires_at, based_on_release_id, change_summary, created_at, completed_at, activated_at
+      ) VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(
+      releaseId,
+      site.id,
+      1,
+      site.publish_origin || '',
+      site.site_url || '',
+      site.site_hostname || '',
+      site.subdomain || '',
+      site.entry_path || '',
+      Number(site.file_count || files.length || 0),
+      Number(site.total_size || 0),
+      site.expires_at || null,
+      null,
+      JSON.stringify({ source: 'legacy-backfill' }),
+      createdAt,
+      completedAt,
+      completedAt
+    ),
+    env.DB.prepare(
+      'UPDATE sites SET active_release_id = ?, updated_at = ? WHERE id = ?'
+    ).bind(releaseId, now, site.id)
+  ];
+  for (const item of files) {
+    statements.push(
+      env.DB.prepare(
+        `INSERT INTO site_release_files (
+          release_id, relative_path, file_id, file_name, content_type, size, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+      ).bind(
+        releaseId,
+        item.relative_path,
+        item.file_id,
+        item.file_name || item.relative_path.split('/').pop() || item.file_id,
+        item.content_type || 'application/octet-stream',
+        Number(item.size || 0),
+        item.created_at || createdAt
+      )
+    );
+  }
+  await env.DB.batch(statements);
+  return releaseId;
+}
+
+async function summarizeSiteReleaseChange(siteId, files, env) {
+  await ensureSitesTables(env);
+  const currentFiles = await env.DB.prepare(
+    `SELECT relative_path, file_id
+     FROM site_files
+     WHERE site_id = ?`
+  ).bind(siteId).all();
+  const previous = new Map((currentFiles.results || []).map((item) => [item.relative_path, item.file_id]));
+  const next = new Map(files.map((item) => [item.relativePath, item.fileId]));
+  let added = 0;
+  let modified = 0;
+  let unchanged = 0;
+  let removed = 0;
+  for (const [relativePath, fileId] of next.entries()) {
+    if (!previous.has(relativePath)) {
+      added += 1;
+      continue;
+    }
+    if (previous.get(relativePath) === fileId) unchanged += 1;
+    else modified += 1;
+  }
+  for (const relativePath of previous.keys()) {
+    if (!next.has(relativePath)) removed += 1;
+  }
+  return {
+    added,
+    modified,
+    removed,
+    unchanged
+  };
+}
+
+async function activateSiteRelease(siteId, releaseId, env) {
+  await ensureSitesTables(env);
+  await ensureSiteReleaseBackfill(siteId, env);
+  const release = await getSiteReleaseById(siteId, releaseId, env);
+  if (!release) throw new Error('站点版本不存在');
+  const site = await getSiteById(siteId, env);
+  if (!site) throw new Error('站点不存在');
+  const files = await listSiteReleaseFiles(releaseId, env);
+  const now = new Date().toISOString();
+  const statements = [
+    env.DB.prepare(
+      `UPDATE site_releases
+       SET status = CASE
+         WHEN id = ? THEN 'active'
+         WHEN status = 'active' THEN 'archived'
+         ELSE status
+       END,
+       activated_at = CASE WHEN id = ? THEN ? ELSE activated_at END
+       WHERE site_id = ?`
+    ).bind(releaseId, releaseId, now, siteId),
+    env.DB.prepare(
+      `UPDATE sites
+       SET name = ?, publish_origin = ?, site_url = ?, site_hostname = ?, subdomain = ?, active_release_id = ?,
+           entry_path = ?, status = 'active', file_count = ?, total_size = ?, expires_at = ?, completed_at = ?, updated_at = ?
+       WHERE id = ?`
+    ).bind(
+      site.name,
+      release.publishOrigin,
+      release.siteUrl,
+      release.siteHostname,
+      release.subdomain,
+      release.id,
+      release.entryPath,
+      files.length,
+      release.totalSize,
+      release.expiresAt,
+      now,
+      now,
+      siteId
+    ),
+    env.DB.prepare('DELETE FROM site_files WHERE site_id = ?').bind(siteId)
+  ];
+  for (const item of files) {
+    statements.push(
+      env.DB.prepare(
+        `INSERT INTO site_files (
+          site_id, relative_path, file_id, file_name, content_type, size, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+      ).bind(
+        siteId,
+        item.relativePath,
+        item.fileId,
+        item.fileName,
+        item.contentType,
+        item.size,
+        item.createdAt || now
+      )
+    );
+  }
+  await env.DB.batch(statements);
+  return {
+    release: {
+      ...release,
+      fileCount: files.length,
+      activatedAt: now
+    },
+    activatedAt: now
+  };
 }
 
 function normalizePublishOrigin(value) {
@@ -2150,30 +2498,30 @@ async function recordPublishedFile(id, meta, links, session, env) {
   ).run();
 }
 
-async function saveSiteMapping(site, files, env) {
+async function saveSiteMapping(site, files, env, options = {}) {
   await ensureSitesTables(env);
+  await ensureSiteReleaseBackfill(site.id, env);
   const now = new Date().toISOString();
+  const releaseId = options.releaseId || siteReleaseId();
+  const versionNo = Number(options.versionNo || await getNextSiteReleaseVersion(site.id, env));
+  const basedOnReleaseId = options.basedOnReleaseId || null;
+  const changeSummary = options.changeSummary || await summarizeSiteReleaseChange(site.id, files, env);
   const statements = [
     env.DB.prepare(
       `INSERT INTO sites (
         id, name, publish_origin, site_url, site_hostname, subdomain, entry_path, status, file_count, total_size, expires_at,
-        api_key_id, user_id, created_at, completed_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?)
+        api_key_id, user_id, active_release_id, created_at, completed_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         publish_origin = excluded.publish_origin,
         site_url = excluded.site_url,
         site_hostname = excluded.site_hostname,
         subdomain = excluded.subdomain,
-        entry_path = excluded.entry_path,
-        status = excluded.status,
-        file_count = excluded.file_count,
-        total_size = excluded.total_size,
         expires_at = excluded.expires_at,
-        api_key_id = excluded.api_key_id,
-        user_id = excluded.user_id,
-        created_at = excluded.created_at,
-        completed_at = excluded.completed_at`
+        api_key_id = COALESCE(sites.api_key_id, excluded.api_key_id),
+        user_id = COALESCE(sites.user_id, excluded.user_id),
+        updated_at = excluded.updated_at`
     ).bind(
       site.id,
       site.name,
@@ -2187,19 +2535,42 @@ async function saveSiteMapping(site, files, env) {
       site.expiresAt,
       site.apiKeyId,
       site.userId,
+      '',
       site.createdAt,
+      site.completedAt || null,
       now
     ),
-    env.DB.prepare('DELETE FROM site_files WHERE site_id = ?').bind(site.id)
+    env.DB.prepare(
+      `INSERT INTO site_releases (
+        id, site_id, version_no, status, publish_origin, site_url, site_hostname, subdomain, entry_path,
+        file_count, total_size, expires_at, based_on_release_id, change_summary, created_at, completed_at, activated_at
+      ) VALUES (?, ?, ?, 'ready', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`
+    ).bind(
+      releaseId,
+      site.id,
+      versionNo,
+      site.publishOrigin,
+      site.siteUrl,
+      site.siteHostname,
+      site.subdomain,
+      site.entryPath,
+      files.length,
+      site.totalSize,
+      site.expiresAt,
+      basedOnReleaseId,
+      JSON.stringify(changeSummary),
+      site.createdAt,
+      now
+    )
   ];
   for (const item of files) {
     statements.push(
       env.DB.prepare(
-        `INSERT INTO site_files (
-          site_id, relative_path, file_id, file_name, content_type, size, created_at
+        `INSERT INTO site_release_files (
+          release_id, relative_path, file_id, file_name, content_type, size, created_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?)`
       ).bind(
-        site.id,
+        releaseId,
         item.relativePath,
         item.fileId,
         item.fileName,
@@ -2210,13 +2581,19 @@ async function saveSiteMapping(site, files, env) {
     );
   }
   await env.DB.batch(statements);
+  await activateSiteRelease(site.id, releaseId, env);
+  return {
+    releaseId,
+    versionNo,
+    changeSummary
+  };
 }
 
 async function getSiteById(siteId, env) {
   await ensureSitesTables(env);
   const item = await env.DB.prepare(
     `SELECT id, name, publish_origin, site_url, site_hostname, subdomain, entry_path, status, file_count, total_size, expires_at,
-            api_key_id, user_id, created_at, completed_at
+            api_key_id, user_id, active_release_id, created_at, completed_at, updated_at
      FROM sites WHERE id = ?`
   ).bind(siteId).first();
   if (!item) return null;
@@ -2234,8 +2611,10 @@ async function getSiteById(siteId, env) {
     expiresAt: item.expires_at || null,
     apiKeyId: item.api_key_id || null,
     userId: item.user_id || null,
+    activeReleaseId: item.active_release_id || null,
     createdAt: item.created_at,
-    completedAt: item.completed_at || null
+    completedAt: item.completed_at || null,
+    updatedAt: item.updated_at || null
   };
 }
 
@@ -2243,7 +2622,7 @@ async function getSiteByHostname(hostname, env) {
   await ensureSitesTables(env);
   const item = await env.DB.prepare(
     `SELECT id, name, publish_origin, site_url, site_hostname, subdomain, entry_path, status, file_count, total_size, expires_at,
-            api_key_id, user_id, created_at, completed_at
+            api_key_id, user_id, active_release_id, created_at, completed_at, updated_at
      FROM sites WHERE site_hostname = ?`
   ).bind(String(hostname || '').toLowerCase()).first();
   if (!item) return null;
@@ -2261,9 +2640,27 @@ async function getSiteByHostname(hostname, env) {
     expiresAt: item.expires_at || null,
     apiKeyId: item.api_key_id || null,
     userId: item.user_id || null,
+    activeReleaseId: item.active_release_id || null,
     createdAt: item.created_at,
-    completedAt: item.completed_at || null
+    completedAt: item.completed_at || null,
+    updatedAt: item.updated_at || null
   };
+}
+
+function canManageSite(site, actor) {
+  if (!site || !actor) return false;
+  if (actor.session?.isAdmin) return true;
+  if (actor.session?.userId && site.userId && actor.session.userId === site.userId) return true;
+  if (actor.apiKey?.id && site.apiKeyId && actor.apiKey.id === site.apiKeyId) return true;
+  if (actor.apiKey?.userId && site.userId && actor.apiKey.userId === site.userId) return true;
+  return false;
+}
+
+function isValidSiteUpdateTokenPayload(payload, siteId) {
+  if (!payload || payload.siteId !== siteId) return false;
+  const expiresAt = payload.expiresAt ? new Date(payload.expiresAt).getTime() : NaN;
+  if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) return false;
+  return true;
 }
 
 async function getSiteFileRecord(siteId, relativePath, env) {
@@ -2882,10 +3279,12 @@ async function handleSitePrepare(request, env) {
 
   const rawApiKey = getRequestApiKey(request, body);
   let apiKey = null;
+  let session = null;
   if (rawApiKey) {
     apiKey = await getApiKeyByRaw(rawApiKey, env);
     if (!apiKey) return json({ error: 'API Key 无效' }, 401);
   } else {
+    session = await getSessionFromRequest(request, env);
     const ip = getClientIp(request);
     const prepareLimit = takeRateLimit(prepareRateBuckets, `site-prepare:${ip}`, Math.max(10, Math.floor(PREPARE_RATE_LIMIT / 4)), PREPARE_RATE_WINDOW_MS);
     if (!prepareLimit.success) {
@@ -2962,25 +3361,57 @@ async function handleSitePrepare(request, env) {
     return json({ error: `入口文件不存在：${entryPath}` }, 400);
   }
 
-  const siteId = `st_${generateId(10)}`;
+  const requestedSiteId = String(body?.siteId || '').trim();
+  const siteUpdateToken = String(body?.siteUpdateToken || '').trim();
+  const updateTarget = requestedSiteId ? await getSiteById(requestedSiteId, env) : null;
+  if (requestedSiteId && !/^st_[a-z0-9]+$/i.test(requestedSiteId)) {
+    return json({ error: '无效的站点 ID' }, 400);
+  }
+  if (requestedSiteId && !updateTarget) {
+    return json({ error: '要更新的站点不存在' }, 404);
+  }
+  const updateTokenPayload = updateTarget && siteUpdateToken
+    ? await readSiteUpdateToken(siteUpdateToken, env)
+    : null;
+  const canManageViaToken = updateTarget && isValidSiteUpdateTokenPayload(updateTokenPayload, updateTarget.id);
+  if (updateTarget && !canManageSite(updateTarget, { session, apiKey }) && !canManageViaToken) {
+    return json({ error: '没有更新该站点的权限，请使用所属账户登录或提供对应 API Key' }, 403);
+  }
+  if (updateTarget) {
+    await ensureSiteReleaseBackfill(updateTarget.id, env);
+    if (canManageViaToken) {
+      await deleteSiteUpdateToken(siteUpdateToken, env);
+    }
+  }
+
+  const siteId = updateTarget?.id || `st_${generateId(10)}`;
   const siteToken = randomToken(24);
+  const releaseId = siteReleaseId();
   const publishOrigin = await resolvePublishOrigin(request, env);
-  const subdomain = siteSubdomainForId(siteId);
+  const subdomain = updateTarget?.subdomain || siteSubdomainForId(siteId);
   const siteLinks = buildPublishedSiteLinks(publishOrigin, subdomain, entryPath);
-  const siteName = sanitizeSiteName(body?.siteName || canonical.sharedRoot || entryPath.split('/')[0] || siteId);
+  const nextVersionNo = updateTarget ? await getNextSiteReleaseVersion(siteId, env) : 1;
+  const siteName = sanitizeSiteName(body?.siteName || updateTarget?.name || canonical.sharedRoot || entryPath.split('/')[0] || siteId);
   const createdAt = new Date().toISOString();
+  const effectiveExpiresAt = typeof expiresAt === 'string'
+    ? expiresAt
+    : (updateTarget?.expiresAt || null);
   await saveSiteSession(siteId, {
     id: siteId,
     siteToken,
+    releaseId,
+    versionNo: nextVersionNo,
+    basedOnReleaseId: updateTarget?.activeReleaseId || null,
+    mode: updateTarget ? 'update' : 'create',
     subdomain,
     siteName,
     entryPath,
     manifest,
     fileCount: manifest.length,
     totalSize,
-    expiresAt: typeof expiresAt === 'string' ? expiresAt : null,
-    apiKeyId: apiKey?.id || null,
-    userId: apiKey?.userId || null,
+    expiresAt: effectiveExpiresAt,
+    apiKeyId: updateTarget?.apiKeyId || apiKey?.id || null,
+    userId: updateTarget?.userId || apiKey?.userId || session?.userId || null,
     createdAt
   }, env);
 
@@ -2995,10 +3426,14 @@ async function handleSitePrepare(request, env) {
     pathRoot: canonical.sharedRoot || '',
     fileCount: manifest.length,
     totalSize,
-    expiresAt: typeof expiresAt === 'string' ? expiresAt : null,
+    expiresAt: effectiveExpiresAt,
     siteUrl: siteLinks.siteUrl,
     entryUrl: siteLinks.entryUrl,
-    uploadStrategy: 'reuse-file-upload-api'
+    uploadStrategy: 'reuse-file-upload-api',
+    updateMode: Boolean(updateTarget),
+    releaseId,
+    versionNo: nextVersionNo,
+    basedOnReleaseId: updateTarget?.activeReleaseId || null
   });
 }
 
@@ -3336,7 +3771,7 @@ async function handleSiteComplete(request, env) {
     session.subdomain || siteSubdomainForId(siteId),
     siteEntryPath
   );
-  await saveSiteMapping({
+  const saved = await saveSiteMapping({
     id: siteId,
     name: sanitizeSiteName(session.siteName),
     publishOrigin,
@@ -3348,13 +3783,21 @@ async function handleSiteComplete(request, env) {
     expiresAt: session.expiresAt || null,
     apiKeyId: session.apiKeyId || null,
     userId: session.userId || null,
-    createdAt: session.createdAt || new Date().toISOString()
-  }, mappedFiles, env);
+    createdAt: session.createdAt || new Date().toISOString(),
+    completedAt: new Date().toISOString()
+  }, mappedFiles, env, {
+    releaseId: session.releaseId,
+    versionNo: session.versionNo,
+    basedOnReleaseId: session.basedOnReleaseId || null
+  });
   await deleteSiteSession(siteId, env);
 
   return json({
     success: true,
     siteId,
+    releaseId: saved.releaseId,
+    versionNo: saved.versionNo,
+    updateMode: session.mode === 'update',
     subdomain: session.subdomain || siteLinks.siteSubdomain,
     siteHostname: siteLinks.siteHostname,
     siteName: sanitizeSiteName(session.siteName),
@@ -3364,7 +3807,8 @@ async function handleSiteComplete(request, env) {
     publishOrigin,
     fileCount: mappedFiles.length,
     totalSize: Number(session.totalSize || 0),
-    expiresAt: session.expiresAt || null
+    expiresAt: session.expiresAt || null,
+    changeSummary: saved.changeSummary
   });
 }
 

@@ -29,14 +29,21 @@ Current capability includes:
 - support both anonymous callers and API Key callers
 - reuse existing file upload primitives where possible
 
-## Non-Goals In Phase 1
+## Non-Goals In Initial Upload Phase
 
-- no version history for a site
 - no in-place overwrite deployment
 - no zip extraction on the server
 - no server-side code execution
 - no admin site browser yet
 - no custom user-defined subdomain yet
+
+## Current Update Model
+
+- each site now keeps release history
+- updating an existing site does not overwrite files in place
+- a new release is created first, then the active site snapshot is switched atomically
+- rollback is implemented by activating a previous release
+- the public site URL and subdomain stay unchanged across updates
 
 ## Current Product Surface
 
@@ -129,7 +136,7 @@ https://st-abc123.ok26.org/images/logo.png
 - `app_settings`
 - `published_files`
 
-### New Tables
+### New Tables / Extended Tables
 
 #### `sites`
 
@@ -146,12 +153,46 @@ https://st-abc123.ok26.org/images/logo.png
 - `expires_at`: optional site-level expiration
 - `api_key_id`: optional API Key owner
 - `user_id`: optional user owner
+- `active_release_id`: currently active release
 - `created_at`
 - `completed_at`
+- `updated_at`
 
 #### `site_files`
 
 - `site_id`
+- `relative_path`
+- `file_id`
+- `file_name`
+- `content_type`
+- `size`
+- `created_at`
+
+`site_files` remains the current active snapshot that serves live traffic.
+
+#### `site_releases`
+
+- `id`
+- `site_id`
+- `version_no`
+- `status`: `ready`, `active`, `archived`
+- `publish_origin`
+- `site_url`
+- `site_hostname`
+- `subdomain`
+- `entry_path`
+- `file_count`
+- `total_size`
+- `expires_at`
+- `based_on_release_id`
+- `change_summary`
+- `created_at`
+- `completed_at`
+- `activated_at`
+
+#### `site_release_files`
+
+- `release_id`
 - `relative_path`
 - `file_id`
 - `file_name`
@@ -181,6 +222,7 @@ Request:
 
 ```json
 {
+  "siteId": "st_existing_optional",
   "siteName": "my-site",
   "entryPath": "index.html",
   "expiresAt": "2026-06-30T00:00:00.000Z",
@@ -196,6 +238,8 @@ Notes:
 
 - `entryPath` may be empty when the folder has no root `index.html`
 - if every uploaded path is under the same top-level directory, the backend strips that directory before persisting the site
+- if `siteId` is omitted, OkFile creates a new site
+- if `siteId` is provided, OkFile treats the request as an update of an existing site and creates the next release for that site
 
 Response:
 
@@ -204,6 +248,8 @@ Response:
   "success": true,
   "siteId": "st_xxxxxxxx",
   "siteToken": "opaque-token",
+  "releaseId": "rel_xxxxxxxx",
+  "versionNo": 4,
   "subdomain": "st-xxxxxxxx",
   "siteHostname": "st-xxxxxxxx.ok26.org",
   "entryPath": "index.html",
@@ -211,7 +257,8 @@ Response:
   "totalSize": 49200,
   "siteUrl": "https://st-xxxxxxxx.ok26.org/",
   "entryUrl": "https://st-xxxxxxxx.ok26.org/",
-  "uploadStrategy": "reuse-file-upload-api"
+  "uploadStrategy": "reuse-file-upload-api",
+  "updateMode": true
 }
 ```
 
@@ -238,6 +285,8 @@ Response:
 {
   "success": true,
   "siteId": "st_xxxxxxxx",
+  "releaseId": "rel_xxxxxxxx",
+  "versionNo": 4,
   "subdomain": "st-xxxxxxxx",
   "siteHostname": "st-xxxxxxxx.ok26.org",
   "siteUrl": "https://st-xxxxxxxx.ok26.org/",
@@ -245,8 +294,22 @@ Response:
   "entryPath": "index.html",
   "publishOrigin": "https://ok26.org",
   "fileCount": 2,
-  "totalSize": 49200
+  "totalSize": 49200,
+  "updateMode": true,
+  "changeSummary": {
+    "added": 1,
+    "modified": 3,
+    "removed": 0,
+    "unchanged": 8
+  }
 }
+
+### Admin Update And Rollback
+
+- admin site detail page shows release history for every site
+- clicking `更新网站` opens the public upload page with `?siteId=...`
+- after upload completes, the site switches to the new release atomically
+- admin can activate any previous release to roll back immediately
 ```
 
 ## Frontend Design

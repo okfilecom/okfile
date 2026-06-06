@@ -4,6 +4,7 @@ const EXPIRED_CLEANUP_BATCH_LIMIT = 200;
 const PUBLIC_SITE_EXAMPLE_ORIGIN = 'https://okfile.com';
 const PUBLISH_DOMAIN_SETTING_KEY = 'publish_origin';
 const META_PREFIX = '__meta__/';
+const SITE_UPDATE_TOKEN_PREFIX = '__site_update_tokens__/';
 const SESSION_COOKIE = 'okfile_session';
 
 function json(data, status = 200, extraHeaders = {}) {
@@ -168,8 +169,10 @@ async function ensureSitesTables(env) {
         expires_at TEXT,
         api_key_id TEXT,
         user_id TEXT,
+        active_release_id TEXT NOT NULL DEFAULT '',
         created_at TEXT NOT NULL,
-        completed_at TEXT
+        completed_at TEXT,
+        updated_at TEXT
       )`
     ),
     env.DB.prepare(
@@ -183,11 +186,46 @@ async function ensureSitesTables(env) {
         created_at TEXT NOT NULL,
         PRIMARY KEY (site_id, relative_path)
       )`
+    ),
+    env.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS site_releases (
+        id TEXT PRIMARY KEY,
+        site_id TEXT NOT NULL,
+        version_no INTEGER NOT NULL,
+        status TEXT NOT NULL DEFAULT 'ready',
+        publish_origin TEXT NOT NULL,
+        site_url TEXT NOT NULL,
+        site_hostname TEXT NOT NULL,
+        subdomain TEXT NOT NULL,
+        entry_path TEXT NOT NULL,
+        file_count INTEGER NOT NULL DEFAULT 0,
+        total_size INTEGER NOT NULL DEFAULT 0,
+        expires_at TEXT,
+        based_on_release_id TEXT,
+        change_summary TEXT,
+        created_at TEXT NOT NULL,
+        completed_at TEXT,
+        activated_at TEXT
+      )`
+    ),
+    env.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS site_release_files (
+        release_id TEXT NOT NULL,
+        relative_path TEXT NOT NULL,
+        file_id TEXT NOT NULL,
+        file_name TEXT NOT NULL,
+        content_type TEXT,
+        size INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (release_id, relative_path)
+      )`
     )
   ]);
   for (const statement of [
     'ALTER TABLE sites ADD COLUMN site_hostname TEXT NOT NULL DEFAULT ""',
-    'ALTER TABLE sites ADD COLUMN subdomain TEXT NOT NULL DEFAULT ""'
+    'ALTER TABLE sites ADD COLUMN subdomain TEXT NOT NULL DEFAULT ""',
+    'ALTER TABLE sites ADD COLUMN active_release_id TEXT NOT NULL DEFAULT ""',
+    'ALTER TABLE sites ADD COLUMN updated_at TEXT'
   ]) {
     try {
       await env.DB.prepare(statement).run();
@@ -197,8 +235,215 @@ async function ensureSitesTables(env) {
     env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_sites_created_at ON sites(created_at)'),
     env.DB.prepare('CREATE UNIQUE INDEX IF NOT EXISTS idx_sites_site_hostname ON sites(site_hostname)'),
     env.DB.prepare('CREATE UNIQUE INDEX IF NOT EXISTS idx_sites_subdomain ON sites(subdomain)'),
-    env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_site_files_file_id ON site_files(file_id)')
+    env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_site_files_file_id ON site_files(file_id)'),
+    env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_site_releases_site_id ON site_releases(site_id)'),
+    env.DB.prepare('CREATE UNIQUE INDEX IF NOT EXISTS idx_site_releases_site_version ON site_releases(site_id, version_no)'),
+    env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_site_release_files_file_id ON site_release_files(file_id)')
   ]);
+}
+
+function parseChangeSummary(value) {
+  if (!value) return null;
+  if (typeof value === 'object') return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
+async function ensureSiteReleaseBackfill(siteId, env) {
+  await ensureSitesTables(env);
+  const site = await env.DB.prepare(
+    `SELECT id, publish_origin, site_url, site_hostname, subdomain, entry_path, file_count, total_size, expires_at,
+            active_release_id, created_at, completed_at, updated_at
+     FROM sites WHERE id = ?`
+  ).bind(siteId).first();
+  if (!site) return null;
+  if (site.active_release_id) return site.active_release_id;
+
+  const existingRelease = await env.DB.prepare(
+    `SELECT id
+     FROM site_releases
+     WHERE site_id = ?
+     ORDER BY CASE WHEN status = 'active' THEN 0 ELSE 1 END, version_no DESC
+     LIMIT 1`
+  ).bind(siteId).first();
+  if (existingRelease?.id) {
+    await env.DB.prepare(
+      'UPDATE sites SET active_release_id = ?, updated_at = COALESCE(updated_at, ?) WHERE id = ?'
+    ).bind(existingRelease.id, site.updated_at || site.completed_at || site.created_at || new Date().toISOString(), siteId).run();
+    return existingRelease.id;
+  }
+
+  const filesResult = await env.DB.prepare(
+    `SELECT relative_path, file_id, file_name, content_type, size, created_at
+     FROM site_files
+     WHERE site_id = ?
+     ORDER BY relative_path ASC`
+  ).bind(siteId).all();
+  const files = filesResult.results || [];
+  if (!files.length) return null;
+
+  const releaseId = `rel_backfill_${generateId(10)}`;
+  const now = new Date().toISOString();
+  const createdAt = site.completed_at || site.created_at || now;
+  const completedAt = site.completed_at || createdAt;
+  const statements = [
+    env.DB.prepare(
+      `INSERT INTO site_releases (
+        id, site_id, version_no, status, publish_origin, site_url, site_hostname, subdomain, entry_path,
+        file_count, total_size, expires_at, based_on_release_id, change_summary, created_at, completed_at, activated_at
+      ) VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(
+      releaseId,
+      siteId,
+      1,
+      site.publish_origin || '',
+      site.site_url || '',
+      site.site_hostname || '',
+      site.subdomain || '',
+      site.entry_path || '',
+      Number(site.file_count || files.length),
+      Number(site.total_size || 0),
+      site.expires_at || null,
+      null,
+      JSON.stringify({ source: 'legacy-backfill' }),
+      createdAt,
+      completedAt,
+      completedAt
+    ),
+    env.DB.prepare('UPDATE sites SET active_release_id = ?, updated_at = ? WHERE id = ?').bind(releaseId, now, siteId)
+  ];
+  for (const item of files) {
+    statements.push(
+      env.DB.prepare(
+        `INSERT INTO site_release_files (
+          release_id, relative_path, file_id, file_name, content_type, size, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+      ).bind(
+        releaseId,
+        item.relative_path,
+        item.file_id,
+        item.file_name || '',
+        item.content_type || '',
+        Number(item.size || 0),
+        item.created_at || createdAt
+      )
+    );
+  }
+  await env.DB.batch(statements);
+  return releaseId;
+}
+
+async function listSiteReleases(siteId, env, limit = 20) {
+  await ensureSitesTables(env);
+  await ensureSiteReleaseBackfill(siteId, env);
+  const result = await env.DB.prepare(
+    `SELECT
+        id, site_id, version_no, status, publish_origin, site_url, site_hostname, subdomain, entry_path,
+        file_count, total_size, expires_at, based_on_release_id, change_summary, created_at, completed_at, activated_at
+     FROM site_releases
+     WHERE site_id = ?
+     ORDER BY version_no DESC
+     LIMIT ?`
+  ).bind(siteId, limit).all();
+  return (result.results || []).map((item) => ({
+    id: item.id,
+    siteId: item.site_id,
+    versionNo: Number(item.version_no || 0),
+    status: item.status || 'ready',
+    publishOrigin: item.publish_origin || '',
+    siteUrl: item.site_url || '',
+    siteHostname: item.site_hostname || '',
+    subdomain: item.subdomain || '',
+    entryPath: item.entry_path || '',
+    fileCount: Number(item.file_count || 0),
+    totalSize: Number(item.total_size || 0),
+    expiresAt: item.expires_at || null,
+    basedOnReleaseId: item.based_on_release_id || null,
+    changeSummary: parseChangeSummary(item.change_summary),
+    createdAt: item.created_at || null,
+    completedAt: item.completed_at || null,
+    activatedAt: item.activated_at || null
+  }));
+}
+
+async function activateSiteRelease(siteId, releaseId, env) {
+  await ensureSitesTables(env);
+  await ensureSiteReleaseBackfill(siteId, env);
+  const release = await env.DB.prepare(
+    `SELECT
+        id, site_id, publish_origin, site_url, site_hostname, subdomain, entry_path, total_size, expires_at
+     FROM site_releases
+     WHERE site_id = ? AND id = ?`
+  ).bind(siteId, releaseId).first();
+  if (!release) return null;
+  const site = await env.DB.prepare('SELECT id, name FROM sites WHERE id = ?').bind(siteId).first();
+  if (!site) return null;
+  const filesResult = await env.DB.prepare(
+    `SELECT relative_path, file_id, file_name, content_type, size, created_at
+     FROM site_release_files
+     WHERE release_id = ?
+     ORDER BY relative_path ASC`
+  ).bind(releaseId).all();
+  const files = filesResult.results || [];
+  const now = new Date().toISOString();
+  const statements = [
+    env.DB.prepare(
+      `UPDATE site_releases
+       SET status = CASE
+         WHEN id = ? THEN 'active'
+         WHEN status = 'active' THEN 'archived'
+         ELSE status
+       END,
+       activated_at = CASE WHEN id = ? THEN ? ELSE activated_at END
+       WHERE site_id = ?`
+    ).bind(releaseId, releaseId, now, siteId),
+    env.DB.prepare(
+      `UPDATE sites
+       SET publish_origin = ?, site_url = ?, site_hostname = ?, subdomain = ?, active_release_id = ?, entry_path = ?,
+           status = 'active', file_count = ?, total_size = ?, expires_at = ?, completed_at = ?, updated_at = ?
+       WHERE id = ?`
+    ).bind(
+      release.publish_origin || '',
+      release.site_url || '',
+      release.site_hostname || '',
+      release.subdomain || '',
+      release.id,
+      release.entry_path || '',
+      files.length,
+      Number(release.total_size || 0),
+      release.expires_at || null,
+      now,
+      now,
+      siteId
+    ),
+    env.DB.prepare('DELETE FROM site_files WHERE site_id = ?').bind(siteId)
+  ];
+  for (const item of files) {
+    statements.push(
+      env.DB.prepare(
+        `INSERT INTO site_files (
+          site_id, relative_path, file_id, file_name, content_type, size, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+      ).bind(
+        siteId,
+        item.relative_path,
+        item.file_id,
+        item.file_name || '',
+        item.content_type || '',
+        Number(item.size || 0),
+        item.created_at || now
+      )
+    );
+  }
+  await env.DB.batch(statements);
+  return {
+    siteId,
+    releaseId,
+    activatedAt: now
+  };
 }
 
 function normalizePublishOrigin(value) {
@@ -232,6 +477,10 @@ function metaKey(id) {
   return `${META_PREFIX}${id}.json`;
 }
 
+function siteUpdateTokenKey(token) {
+  return `${SITE_UPDATE_TOKEN_PREFIX}${token}.json`;
+}
+
 async function readJsonObject(key, env) {
   const object = await env.FILES.get(key);
   if (!object) return null;
@@ -240,6 +489,15 @@ async function readJsonObject(key, env) {
   } catch {
     return null;
   }
+}
+
+async function saveJsonObject(key, payload, env) {
+  await env.FILES.put(key, JSON.stringify(payload), {
+    httpMetadata: {
+      contentType: 'application/json; charset=utf-8',
+      cacheControl: 'no-store'
+    }
+  });
 }
 
 async function readSidecarMeta(id, env) {
@@ -590,6 +848,15 @@ function syncPublicNav(origin){
   $('publicAccountLink').href = base + '/zh/account/';
   $('publicUploadLink').href = base + '/zh/upload/';
 }
+function formatReleaseSummary(summary){
+  if(!summary) return '首次发布或缺少变更摘要';
+  const parts = [];
+  if(Number.isFinite(summary.added)) parts.push('新增 ' + summary.added);
+  if(Number.isFinite(summary.modified)) parts.push('修改 ' + summary.modified);
+  if(Number.isFinite(summary.removed)) parts.push('删除 ' + summary.removed);
+  if(Number.isFinite(summary.unchanged)) parts.push('未变 ' + summary.unchanged);
+  return parts.length ? parts.join(' / ') : '首次发布或缺少变更摘要';
+}
 function show(el,msg){el.textContent=msg;el.classList.remove('hidden')}
 function hide(el){el.textContent='';el.classList.add('hidden')}
 function switchView(name){
@@ -637,6 +904,16 @@ async function api(path,init){
   const data=await res.json().catch(()=>null);
   if(!res.ok) throw new Error(data?.error||('HTTP '+res.status));
   return data;
+}
+async function openSiteUpdate(siteId){
+  hide($('adminErr'));
+  hide($('adminMsg'));
+  try{
+    const data = await api('/api/admin/sites/' + encodeURIComponent(siteId) + '/update-link',{method:'POST'});
+    window.open(data.uploadUrl,'_blank','noopener');
+  }catch(error){
+    show($('adminErr'),error.message);
+  }
 }
 function row(item){
   if(!item.hasApiKey){
@@ -708,6 +985,7 @@ function siteRow(item){
   if(item.siteUrl){
     actions.push('<a class="btn-secondary" href="' + esc(item.siteUrl) + '" target="_blank" rel="noopener">打开站点</a>');
   }
+  actions.push('<button class="btn-secondary" data-update-site="' + esc(item.id) + '">更新网站</button>');
   actions.push('<button class="btn-secondary" data-view-site="' + esc(item.id) + '">详情</button>');
   actions.push('<button class="btn-secondary" data-extend-site="' + esc(item.id) + '">延长 7 天</button>');
   actions.push('<button class="btn-secondary" data-expire-site="' + esc(item.id) + '">立即失效</button>');
@@ -750,6 +1028,7 @@ async function loadSiteDetail(siteId){
   }));
   const site = data.site;
   const meta = data.filesMeta;
+  const releases = data.releases || [];
   const expiresValue = toDatetimeLocalValue(site.expiresAt);
   const rows = (data.files || []).map((item)=>'<tr>' +
     '<td class="file-path">' + esc(item.relativePath) + '</td>' +
@@ -758,6 +1037,20 @@ async function loadSiteDetail(siteId){
     '<td>' + esc(formatSize(Number(item.size || 0))) + '</td>' +
     '<td><a class="btn-secondary" href="' + esc(site.siteUrl + item.relativePath) + '" target="_blank" rel="noopener">打开</a></td>' +
   '</tr>').join('');
+  const releaseRows = releases.map((release)=>{
+    const isActive = site.activeReleaseId && site.activeReleaseId === release.id;
+    const actions = isActive
+      ? '<span class="muted">当前线上版本</span>'
+      : '<button class="btn-secondary" data-activate-release="' + esc(release.id) + '">切换到此版本</button>';
+    return '<tr>' +
+      '<td><div>V' + esc(String(release.versionNo || 0)) + '</div><div class="muted mono">' + esc(release.id) + '</div></td>' +
+      '<td>' + esc(release.status || 'ready') + '</td>' +
+      '<td>' + esc(release.entryPath || '-') + '</td>' +
+      '<td>' + esc(String(release.fileCount || 0)) + '<div class="muted">' + esc(formatSize(Number(release.totalSize || 0))) + '</div></td>' +
+      '<td><div>' + formatTime(release.completedAt) + '</div><div class="muted">' + esc(formatReleaseSummary(release.changeSummary)) + '</div></td>' +
+      '<td><div class="action-row">' + actions + '</div></td>' +
+    '</tr>';
+  }).join('');
   wrap.innerHTML = '<div class="site-detail">' +
     '<h3>站点详情</h3>' +
     '<div class="site-detail-grid">' +
@@ -767,13 +1060,17 @@ async function loadSiteDetail(siteId){
       '<div class="item"><div class="k">入口文件</div><div class="v">' + esc(site.entryPath || '-') + '</div></div>' +
       '<div class="item"><div class="k">状态</div><div class="v">' + esc(siteStatus(site)) + '</div></div>' +
       '<div class="item"><div class="k">归属</div><div class="v">' + esc(site.ownerEmail || '匿名') + '</div></div>' +
+      '<div class="item"><div class="k">当前版本</div><div class="v">' + esc(site.activeReleaseId || '-') + '</div></div>' +
     '</div>' +
     '<div class="inline-row" style="margin:10px 0 14px">' +
       '<input id="siteExpiryInput" type="datetime-local" value="' + esc(expiresValue) + '">' +
       '<button class="btn-primary" id="siteSaveExpiryBtn" style="margin-top:0">保存过期时间</button>' +
       '<button class="btn-secondary" id="siteClearExpiryBtn" type="button">清除过期时间</button>' +
       (site.siteUrl ? '<a class="btn-secondary" href="' + esc(site.siteUrl) + '" target="_blank" rel="noopener">打开站点</a>' : '') +
+      '<button class="btn-secondary" id="siteOpenUpdateBtn" type="button">更新网站</button>' +
     '</div>' +
+    '<div class="note">更新方式：点击“更新网站”后会跳转到上传页，并以当前站点 ID 创建新版本。全部文件上传完成后，站点会原子切换到新版本；这里也可以直接切回历史版本。</div>' +
+    '<table><thead><tr><th>版本</th><th>状态</th><th>入口</th><th>文件数/大小</th><th>时间 / 摘要</th><th>操作</th></tr></thead><tbody>' + (releaseRows || '<tr><td colspan="6" class="muted">当前还没有版本记录。</td></tr>') + '</tbody></table>' +
     '<div class="inline-row" style="margin:10px 0 14px">' +
       '<input id="siteDetailQuery" type="text" placeholder="搜索文件路径或文件名" value="' + esc(siteState.detailQ) + '">' +
       '<select id="siteDetailPageSize">' +
@@ -839,6 +1136,24 @@ async function loadSiteDetail(siteId){
     siteState.detailPage = meta.page + 1;
     await loadSiteDetail(site.id);
   };
+  document.querySelectorAll('[data-activate-release]').forEach((btn)=>{
+    btn.onclick = async () => {
+      hide($('adminErr'));
+      hide($('adminMsg'));
+      const releaseId = btn.getAttribute('data-activate-release');
+      if(!confirm('确认切换到这个历史版本吗？当前线上站点会立即切换。')) return;
+      try{
+        await api('/api/admin/sites/' + encodeURIComponent(site.id) + '/releases/' + encodeURIComponent(releaseId) + '/activate',{method:'POST'});
+        show($('adminMsg'),'站点版本已切换');
+        await loadSitesTable();
+      }catch(error){
+        show($('adminErr'),error.message);
+      }
+    };
+  });
+  $('siteOpenUpdateBtn').onclick = async () => {
+    await openSiteUpdate(site.id);
+  };
 }
 async function loadSitesTable(){
   hide($('adminErr'));
@@ -870,6 +1185,11 @@ async function loadSitesTable(){
       siteState.detailPage = 1;
       siteState.detailQ = '';
       await loadSiteDetail(siteState.selectedSiteId);
+    };
+  });
+  document.querySelectorAll('[data-update-site]').forEach((btn)=>{
+    btn.onclick = async () => {
+      await openSiteUpdate(btn.getAttribute('data-update-site'));
     };
   });
   document.querySelectorAll('[data-extend-site]').forEach((btn)=>{
@@ -1301,6 +1621,7 @@ async function handleAdminSiteDetail(request, siteId, env) {
   if (!session) return json({ error: '请先登录' }, 401);
   if (!session.isAdmin) return json({ error: '没有管理员权限' }, 403);
   await ensureSitesTables(env);
+  await ensureSiteReleaseBackfill(siteId, env);
   const site = await env.DB.prepare(
     `SELECT
         sites.id,
@@ -1316,8 +1637,10 @@ async function handleAdminSiteDetail(request, siteId, env) {
         sites.expires_at,
         sites.api_key_id,
         sites.user_id,
+        sites.active_release_id,
         sites.created_at,
         sites.completed_at,
+        sites.updated_at,
         users.email AS owner_email
      FROM sites
      LEFT JOIN users ON users.id = sites.user_id
@@ -1345,6 +1668,7 @@ async function handleAdminSiteDetail(request, siteId, env) {
      LIMIT ? OFFSET ?`
   ).bind(siteId, fileQ, fileLike, fileLike, filePageSize, fileOffset).all();
   const filesTotal = Number(fileCountRow?.total || 0);
+  const releases = await listSiteReleases(siteId, env, 30);
   return json({
     success: true,
     site: {
@@ -1361,9 +1685,11 @@ async function handleAdminSiteDetail(request, siteId, env) {
       expiresAt: site.expires_at || null,
       apiKeyId: site.api_key_id || null,
       userId: site.user_id || null,
+      activeReleaseId: site.active_release_id || null,
       ownerEmail: site.owner_email || '',
       createdAt: site.created_at || null,
-      completedAt: site.completed_at || null
+      completedAt: site.completed_at || null,
+      updatedAt: site.updated_at || null
     },
     files: (filesResult.results || []).map((item) => ({
       siteId: item.site_id,
@@ -1380,7 +1706,49 @@ async function handleAdminSiteDetail(request, siteId, env) {
       pageSize: filePageSize,
       total: filesTotal,
       totalPages: Math.max(1, Math.ceil(filesTotal / filePageSize))
-    }
+    },
+    releases
+  });
+}
+
+async function handleAdminActivateSiteRelease(request, siteId, releaseId, env) {
+  const session = await getSessionFromRequest(request, env);
+  if (!session) return json({ error: '请先登录' }, 401);
+  if (!session.isAdmin) return json({ error: '没有管理员权限' }, 403);
+  await ensureSitesTables(env);
+  const existing = await env.DB.prepare('SELECT id FROM sites WHERE id = ?').bind(siteId).first();
+  if (!existing) return json({ error: '站点不存在' }, 404);
+  const activated = await activateSiteRelease(siteId, releaseId, env);
+  if (!activated) return json({ error: '站点版本不存在' }, 404);
+  return json({ success: true, ...activated });
+}
+
+async function handleAdminCreateSiteUpdateLink(request, siteId, env) {
+  const session = await getSessionFromRequest(request, env);
+  if (!session) return json({ error: '请先登录' }, 401);
+  if (!session.isAdmin) return json({ error: '没有管理员权限' }, 403);
+  await ensureSitesTables(env);
+  const site = await env.DB.prepare(
+    `SELECT id, site_hostname, site_url
+     FROM sites WHERE id = ?`
+  ).bind(siteId).first();
+  if (!site) return json({ error: '站点不存在' }, 404);
+  const rawToken = randomToken(24);
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + 10 * 60 * 1000).toISOString();
+  await saveJsonObject(siteUpdateTokenKey(rawToken), {
+    siteId,
+    issuedBy: session.email || '',
+    createdAt: now.toISOString(),
+    expiresAt
+  }, env);
+  const publicOrigin = (await getConfiguredPublishOrigin(env)) || PUBLIC_SITE_EXAMPLE_ORIGIN;
+  const uploadUrl = `${publicOrigin.replace(/\/+$/, '')}/zh/upload/?siteId=${encodeURIComponent(siteId)}&siteUpdateToken=${encodeURIComponent(rawToken)}`;
+  return json({
+    success: true,
+    siteId,
+    uploadUrl,
+    expiresAt
   });
 }
 
@@ -1406,6 +1774,8 @@ async function handleAdminDeleteSite(request, siteId, env) {
   const existing = await env.DB.prepare('SELECT id FROM sites WHERE id = ?').bind(siteId).first();
   if (!existing) return json({ error: '站点不存在' }, 404);
   await env.DB.batch([
+    env.DB.prepare('DELETE FROM site_release_files WHERE release_id IN (SELECT id FROM site_releases WHERE site_id = ?)').bind(siteId),
+    env.DB.prepare('DELETE FROM site_releases WHERE site_id = ?').bind(siteId),
     env.DB.prepare('DELETE FROM site_files WHERE site_id = ?').bind(siteId),
     env.DB.prepare('DELETE FROM sites WHERE id = ?').bind(siteId)
   ]);
@@ -1487,6 +1857,14 @@ export default {
     const adminSiteDetailMatch = url.pathname.match(/^\/api\/admin\/sites\/([^/]+)$/);
     if (adminSiteDetailMatch && request.method === 'GET') {
       return handleAdminSiteDetail(request, adminSiteDetailMatch[1], env);
+    }
+    const adminSiteUpdateLinkMatch = url.pathname.match(/^\/api\/admin\/sites\/([^/]+)\/update-link$/);
+    if (adminSiteUpdateLinkMatch && request.method === 'POST') {
+      return handleAdminCreateSiteUpdateLink(request, adminSiteUpdateLinkMatch[1], env);
+    }
+    const adminSiteReleaseMatch = url.pathname.match(/^\/api\/admin\/sites\/([^/]+)\/releases\/([^/]+)\/activate$/);
+    if (adminSiteReleaseMatch && request.method === 'POST') {
+      return handleAdminActivateSiteRelease(request, adminSiteReleaseMatch[1], adminSiteReleaseMatch[2], env);
     }
     const adminSiteMatch = url.pathname.match(/^\/api\/admin\/sites\/([^/]+)\/(expire|delete|expiry)$/);
     if (adminSiteMatch && request.method === 'POST') {
