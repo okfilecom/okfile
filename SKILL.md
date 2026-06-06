@@ -1,16 +1,22 @@
 ---
 name: okfile
-description: Upload and publish images, videos, PDFs, and common files to OkFile. Use when an agent needs direct links, preview URLs, anonymous upload, or API-key-based publishing.
-version: 1.0.0
+description: Upload and publish images, videos, PDFs, and common files to OkFile, or publish a static site folder to a per-site subdomain with directory listing fallback when root index.html is absent.
+version: 1.0.3
 license: Apache-2.0
 ---
 # OkFile Skill
+Official site: `https://www.okfile.com/`
+
 ## Overview
 OkFile is an agent-first file upload and publish service.
 Use this skill when an agent needs to:
 - upload images, videos, PDFs, or common files
+- upload a static site folder and publish it to a per-site subdomain
+- rely on automatic shared top-level directory stripping for folder-based site uploads
+- expose a directory listing when a site has no root `index.html`
 - return a direct file URL via `url`
 - return a preview or playback URL via `playUrl`
+- return a published site URL via `siteUrl` or `entryUrl`
 - publish files anonymously or with a user API key
 - handle large files with multipart upload and retry missing parts only
 ## When To Use
@@ -18,6 +24,8 @@ Choose this skill when the user asks to:
 - upload or publish a file
 - generate a public file link
 - generate an image, video, or PDF preview link
+- publish a folder as a static website
+- publish a folder that may not contain root `index.html`
 - batch-process multiple files
 - upload large files with resumable multipart flow
 ## Quick Start
@@ -25,6 +33,17 @@ Choose this skill when the user asks to:
 1. `POST /api/upload/prepare`
 2. `PUT uploadUrl` or each `parts[].uploadUrl`
 3. `POST /api/upload/complete`
+### Static Site Flow
+1. `POST /api/site/prepare`
+2. upload each file through the normal file upload flow
+3. `POST /api/site/complete`
+
+Static site behavior:
+- if every uploaded path is under one shared top-level folder, OkFile strips that folder and treats its contents as the site root
+- if root `index.html` exists, the site root renders that page
+- if root `index.html` does not exist, the site root renders a directory listing with file name, size, and upload time
+- images and videos open inline from that listing
+- other files should use download links
 ### Minimal Prepare Request
 ```bash
 curl -X POST "https://www.okfile.com/api/upload/prepare" \
@@ -150,10 +169,66 @@ Response example:
   "bytesReceived": 471859200
 }
 ```
+### `POST /api/site/prepare`
+Request body:
+```json
+{
+  "siteName": "docs-site",
+  "files": [
+    { "path": "docs/getting-started.md", "size": 1200, "contentType": "text/markdown; charset=utf-8" },
+    { "path": "assets/app.css", "size": 3200, "contentType": "text/css; charset=utf-8" },
+    { "path": "images/logo.png", "size": 4200, "contentType": "image/png" }
+  ]
+}
+```
+Notes:
+- omit `entryPath` entirely when the uploaded folder has no root `index.html`
+- do not generate or upload a synthetic `index.html` just to mimic a directory listing
+- when root `index.html` is absent, OkFile generates the directory listing automatically
+- use site-relative paths such as `assets/app.css`, not local absolute paths
+- nested subdirectories are supported, for example `docs/getting-started.md` or `images/icons/logo.svg`
+Success response example:
+```json
+{
+  "success": true,
+  "siteId": "st_ab12cd34",
+  "siteToken": "token",
+  "siteHostname": "st-ab12cd34.ok26.org",
+  "siteUrl": "https://st-ab12cd34.ok26.org/",
+  "entryUrl": "https://st-ab12cd34.ok26.org/",
+  "uploadStrategy": "reuse-file-upload-api"
+}
+```
+### `POST /api/site/complete`
+Request body:
+```json
+{
+  "siteId": "st_ab12cd34",
+  "siteToken": "token",
+  "files": [
+    { "relativePath": "docs/getting-started.md", "fileId": "f1a2b3c4" },
+    { "relativePath": "assets/app.css", "fileId": "d4e5f6g7" },
+    { "relativePath": "images/logo.png", "fileId": "h7i8j9k0" }
+  ]
+}
+```
+Success response example:
+```json
+{
+  "success": true,
+  "siteId": "st_ab12cd34",
+  "siteHostname": "st-ab12cd34.ok26.org",
+  "siteUrl": "https://st-ab12cd34.ok26.org/",
+  "entryUrl": "https://st-ab12cd34.ok26.org/",
+  "entryPath": "index.html"
+}
+```
 ## Output Strategy
 Prefer returning:
 - `url` for direct consumption, download, embedding, or API use
 - `playUrl` for image preview, video playback, or PDF viewing
+- `siteUrl` for the root of a published static site
+- `entryUrl` for the preferred HTML entry page, or the same value as `siteUrl` when the site uses directory listing
 For video or PDF, returning both is usually best.
 ## Supported Types
 - images: `JPG`, `JPEG`, `PNG`, `GIF`, `WebP`, `BMP`, `SVG`
@@ -173,6 +248,10 @@ For video or PDF, returning both is usually best.
 - check every part upload for `2xx` status
 - retry only `missingParts`, not the whole file
 - prefer stable HTTP clients for large files and multipart flows
+- include `index.html` at the site root when you want the subdomain homepage to render a page immediately
+- if a site is intentionally file-browsing-only, leave root `index.html` out and use the generated listing page
+- do not ask the agent to create a synthetic listing `index.html`; upload the real folder tree and let OkFile render the listing automatically
+- preserve nested subdirectories exactly as uploaded; published sites support paths like `/docs/guide/` and `/assets/app.css`
 ## Useful URLs
 - home: `https://www.okfile.com/en/`
 - upload page: `https://www.okfile.com/en/upload/`

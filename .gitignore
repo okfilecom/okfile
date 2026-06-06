@@ -11,3 +11,5 @@ deployments*.json
 multi-prepare.json
 project-list.txt
 *.log
+tmp-site-test*/
+tmp-site-test-result.txt

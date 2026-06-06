@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>OkFile — 面向 Agent 的文件上载与发布服务</title>
-<meta name="description" id="metaDesc" content="OkFile 主要为 Agent 提供文件上载与发布能力，支持匿名调用、API Key、分片上载、缺失分片重试、状态查询、直链返回和预览链接。人工上载页面作为辅助入口保留。">
+  <meta name="description" id="metaDesc" content="OkFile 主要为 Agent 提供文件上载与发布能力，支持匿名调用、API Key、分片上载、缺失分片重试、状态查询、直链返回、预览链接，以及目录站点上传后发布到独立子域名。人工上载页面作为辅助入口保留。">
 <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1">
 <meta name="theme-color" content="#0a0a0a">
 <style>
@@ -199,6 +199,13 @@
       </div>
       <p><span class="zh">人工上载页面作为辅助入口，便于手动操作。<a href="/zh/upload/">上载链接</a></span><span class="en">The manual upload page serves as a supplementary entry for manual operations. <a href="/en/upload/">Upload link</a></span></p>
     </div>
+    <div class="feature-card">
+      <div class="feature-head">
+        <div class="icon">&#127760;</div>
+        <h3><span class="zh">目录站点子域名发布</span><span class="en">Folder-To-Subdomain Sites</span></h3>
+      </div>
+      <p><span class="zh">支持上传整个静态站点目录，发布后自动生成独立子域名，现成 HTML 中的根路径和相对路径资源都可直接工作。</span><span class="en">Upload a full static site folder and publish it to a dedicated subdomain, with both root-relative and relative assets working out of the box.</span></p>
+    </div>
   </div>
 </section>
 
@@ -227,7 +234,7 @@
 
   <div class="agent-box">
     <h3><span class="icon">&#129302;</span> OkFile Skill</h3>
-    <p class="agent-desc"><span class="zh">任意 Agent 都可以直接调用这套接口完成文件上载与发布，支持多文件并行上载，无需依赖人工操作浏览器。</span><span class="en">Any Agent can directly call these APIs to upload and publish files, supporting parallel multi-file uploads without manual browser interaction.</span></p>
+    <p class="agent-desc"><span class="zh">任意 Agent 都可以直接调用这套接口完成文件上载、静态站点目录发布和多文件并行上载，无需依赖人工操作浏览器；根目录没有 `index.html` 时也支持目录列表回退。</span><span class="en">Any Agent can directly call these APIs to upload files, publish static site folders, and run parallel multi-file uploads without manual browser interaction; when the site root has no `index.html`, OkFile falls back to a directory listing.</span></p>
 
     <div class="skill-meta">
       <div class="meta-item">
@@ -244,7 +251,7 @@
       </div>
       <div class="meta-item">
         <div class="label"><span class="zh">触发场景</span><span class="en">Trigger Scenario</span></div>
-        <div class="value"><span class="zh">把图片、视频、PDF 或常见文件发布到 www.okfile.com，并支持多文件并行上载</span><span class="en">Publish images, videos, PDFs, or common files to www.okfile.com, with parallel multi-file upload support.</span></div>
+        <div class="value"><span class="zh">把图片、视频、PDF、常见文件或整个静态站点目录发布到 OkFile，并支持多文件并行上载</span><span class="en">Publish images, videos, PDFs, common files, or a full static site folder to OkFile, with parallel multi-file upload support.</span></div>
       </div>
       <div class="meta-item">
         <div class="label"><span class="zh">支持的文件类型</span><span class="en">Supported Types</span></div>
@@ -252,7 +259,7 @@
       </div>
       <div class="meta-item">
         <div class="label"><span class="zh">API 端点</span><span class="en">API Endpoints</span></div>
-        <div class="value">POST /api/upload/prepare + PUT uploadUrl + POST /api/upload/complete + GET /api/upload/status/{id}</div>
+        <div class="value">POST /api/upload/prepare + POST /api/site/prepare + PUT uploadUrl + POST /api/upload/complete + POST /api/site/complete</div>
       </div>
       <div class="meta-item">
         <div class="label"><span class="zh">认证方式</span><span class="en">Auth Method</span></div>
@@ -260,7 +267,7 @@
       </div>
       <div class="meta-item">
         <div class="label"><span class="zh">返回值</span><span class="en">Return Value</span></div>
-        <div class="value">{success, id, url, playUrl, type}</div>
+        <div class="value">{success, id, url, playUrl, type} / {siteUrl, entryUrl}</div>
       </div>
     </div>
 
@@ -268,10 +275,16 @@
 
     <div class="code-block">
       <div class="code-header"><span class="label"><span class="zh">接入顺序</span><span class="en">Integration Order</span></span></div>
-      <pre class="zh"><code><span class="code-comment"># 方式 A：匿名上载，适合直接发布</span>
+      <pre class="zh"><code><span class="code-comment"># 方式 A：普通文件发布</span>
 1. POST /api/upload/prepare
 2. 对 uploadUrl 或 parts[].uploadUrl 执行 PUT
 3. POST /api/upload/complete
+
+<span class="code-comment"># 方式 B：站点目录发布</span>
+1. POST /api/site/prepare
+2. 对站点内每个文件执行普通文件上载链路，收集 fileId
+3. POST /api/site/complete
+4. 返回 siteUrl 作为站点根路径；如有首页则同时返回 entryUrl
 
 <span class="code-comment"># 说明</span>
 - 匿名模式按 IP 做频率限制
@@ -279,11 +292,19 @@
 - 支持多文件并行上载与分片并行上载
 - 默认返回文件直链
 - 追加 ?play=1 进入预览/播放页
+- 站点目录发布返回 siteUrl / entryUrl
+- 根目录没有 index.html 时，站点根路径显示目录列表
 - 人工页面仅作为辅助入口</code></pre>
-      <pre class="en"><code><span class="code-comment"># Mode A: anonymous upload for direct publishing</span>
+      <pre class="en"><code><span class="code-comment"># Mode A: regular file publishing</span>
 1. POST /api/upload/prepare
 2. PUT to uploadUrl or each parts[].uploadUrl
 3. POST /api/upload/complete
+
+<span class="code-comment"># Mode B: static site folder publishing</span>
+1. POST /api/site/prepare
+2. Upload each site file through the normal file flow and collect fileId values
+3. POST /api/site/complete
+4. Return siteUrl as the site root; return entryUrl when a preferred HTML entry exists
 
 <span class="code-comment"># Notes</span>
 - Anonymous mode is rate-limited by IP
@@ -291,11 +312,13 @@
 - Supports parallel multi-file uploads and multipart concurrency
 - Returns the direct file URL by default
 - Append ?play=1 to open the preview or playback page
+- Static site publishing returns siteUrl / entryUrl
+- If the root has no index.html, the site root shows a directory listing
 - The manual page is kept only as a supplementary entry</code></pre>
     </div>
 
     <div style="margin-top:20px;padding:16px;background:rgba(22,163,74,.06);border:1px solid rgba(22,163,74,.15);border-radius:8px;font-size:13px;color:#86efac;line-height:1.6">
-      <strong>&#128161; <span class="zh">Skill 文档说明：</span><span class="en">Skill Doc Note:</span></strong> <span class="zh">项目仓库现已提供 `SKILL.md`（V1.0），覆盖邮箱登录、API Key、管理员配额、`preferredPartSize`、状态查询、缺失分片重试，以及适合 Agent 的上载建议。接入时优先参考该文档。</span><span class="en">The repo provides `SKILL.md` (V1.0), covering email login, API Keys, admin quotas, `preferredPartSize`, upload status queries, missing-part retries, and practical upload guidance for Agents. Refer to it first during integration.</span>
+      <strong>&#128161; <span class="zh">Skill 文档说明：</span><span class="en">Skill Doc Note:</span></strong> <span class="zh">项目仓库现已提供 `SKILL.md`（V1.0.1），覆盖邮箱登录、API Key、`preferredPartSize`、状态查询、缺失分片重试，以及站点目录发布所需的 `POST /api/site/prepare`、`POST /api/site/complete`、`siteUrl`、`entryUrl` 和目录列表回退说明。接入时优先参考该文档。</span><span class="en">The repo provides `SKILL.md` (V1.0.1), covering email login, API Keys, `preferredPartSize`, upload status queries, missing-part retries, and the static-site flow including `POST /api/site/prepare`, `POST /api/site/complete`, `siteUrl`, `entryUrl`, and directory-listing fallback behavior. Refer to it first during integration.</span>
     </div>
 
     <div class="agent-actions" style="margin-top:16px">
@@ -310,14 +333,14 @@
 <!-- API Docs -->
 <section id="api-doc">
   <h2><span class="num">03</span><span class="zh">API 文档</span><span class="en">API Docs</span></h2>
-  <p class="section-desc"><span class="zh">主要面向开发者和 Agent 直接调用，支持匿名上载、并行上载、状态查询，或携带用户 API Key 发布文件。</span><span class="en">Primarily for developers and Agents, supporting anonymous uploads, parallel uploads, status queries, or publishing with user API Keys.</span></p>
+  <p class="section-desc"><span class="zh">主要面向开发者和 Agent 直接调用，支持匿名上载、并行上载、状态查询、静态站点目录发布，或携带用户 API Key 发布文件。</span><span class="en">Primarily for developers and Agents, supporting anonymous uploads, parallel uploads, status queries, static-site folder publishing, or publishing with user API Keys.</span></p>
 
   <div class="code-block">
     <div class="code-header">
       <span class="label"><span class="zh">最简接入</span><span class="en">Quick Start</span></span>
       <button onclick="cpCode(this)"><span class="zh">复制</span><span class="en">Copy</span></button>
     </div>
-    <pre class="zh"><code><span class="code-comment"># 最小链路：prepare -> PUT -> complete</span>
+    <pre class="zh"><code><span class="code-comment"># 文件最小链路：prepare -> PUT -> complete</span>
 <span class="code-comment"># 1) 申请上载地址。匿名可不传 apiKey；如需更小分片，可传 preferredPartSize。</span>
 <span class="code-keyword">curl</span> <span class="code-flag">-X POST</span> <span class="code-string">"https://www.okfile.com/api/upload/prepare"</span> \
   <span class="code-flag">-H</span> <span class="code-string">"Content-Type: application/json"</span> \
@@ -330,8 +353,19 @@
   <span class="code-flag">--data</span> <span class="code-string">'{"id":"a3k7m92x"}'</span>
 
 <span class="code-comment"># 可选：用 status 查询分片进度</span>
-<span class="code-keyword">curl</span> <span class="code-string">"https://www.okfile.com/api/upload/status/a3k7m92x"</span></code></pre>
-    <pre class="en"><code><span class="code-comment"># Minimal flow: prepare -> PUT -> complete</span>
+<span class="code-keyword">curl</span> <span class="code-string">"https://www.okfile.com/api/upload/status/a3k7m92x"</span>
+
+<span class="code-comment"># 站点最小链路：site/prepare -> 文件上载 -> site/complete</span>
+<span class="code-comment"># 如果没有根目录 index.html，不要额外生成它；OkFile 会自动渲染目录列表</span>
+<span class="code-keyword">curl</span> <span class="code-flag">-X POST</span> <span class="code-string">"https://www.okfile.com/api/site/prepare"</span> \
+  <span class="code-flag">-H</span> <span class="code-string">"Content-Type: application/json"</span> \
+  <span class="code-flag">--data</span> <span class="code-string">'{"siteName":"docs-site","files":[{"path":"docs/getting-started.md","size":1200,"contentType":"text/markdown; charset=utf-8"},{"path":"assets/app.css","size":3200,"contentType":"text/css; charset=utf-8"},{"path":"images/logo.png","size":4200,"contentType":"image/png"}]}'</span>
+
+<span class="code-comment"># 然后按普通文件上载链路上传每个文件，收集 fileId，再调用：</span>
+<span class="code-keyword">curl</span> <span class="code-flag">-X POST</span> <span class="code-string">"https://www.okfile.com/api/site/complete"</span> \
+  <span class="code-flag">-H</span> <span class="code-string">"Content-Type: application/json"</span> \
+  <span class="code-flag">--data</span> <span class="code-string">'{"siteId":"st_xxxx","siteToken":"token_xxxx","files":[{"relativePath":"docs/getting-started.md","fileId":"a3k7m92x"},{"relativePath":"assets/app.css","fileId":"b8f2k19a"},{"relativePath":"images/logo.png","fileId":"c9d0e1f2"}]}'</span></code></pre>
+    <pre class="en"><code><span class="code-comment"># File minimal flow: prepare -> PUT -> complete</span>
 <span class="code-comment"># 1) Request upload URLs. Omit apiKey for anonymous mode; pass preferredPartSize if you want smaller parts.</span>
 <span class="code-keyword">curl</span> <span class="code-flag">-X POST</span> <span class="code-string">"https://www.okfile.com/api/upload/prepare"</span> \
   <span class="code-flag">-H</span> <span class="code-string">"Content-Type: application/json"</span> \
@@ -344,7 +378,18 @@
   <span class="code-flag">--data</span> <span class="code-string">'{"id":"a3k7m92x"}'</span>
 
 <span class="code-comment"># Optional: query multipart progress with status</span>
-<span class="code-keyword">curl</span> <span class="code-string">"https://www.okfile.com/api/upload/status/a3k7m92x"</span></code></pre>
+<span class="code-keyword">curl</span> <span class="code-string">"https://www.okfile.com/api/upload/status/a3k7m92x"</span>
+
+<span class="code-comment"># Site minimal flow: site/prepare -> upload files -> site/complete</span>
+<span class="code-comment"># If there is no root index.html, do not generate one; OkFile renders the directory listing automatically</span>
+<span class="code-keyword">curl</span> <span class="code-flag">-X POST</span> <span class="code-string">"https://www.okfile.com/api/site/prepare"</span> \
+  <span class="code-flag">-H</span> <span class="code-string">"Content-Type: application/json"</span> \
+  <span class="code-flag">--data</span> <span class="code-string">'{"siteName":"docs-site","files":[{"path":"docs/getting-started.md","size":1200,"contentType":"text/markdown; charset=utf-8"},{"path":"assets/app.css","size":3200,"contentType":"text/css; charset=utf-8"},{"path":"images/logo.png","size":4200,"contentType":"image/png"}]}'</span>
+
+<span class="code-comment"># Then upload each file through the normal file flow, collect fileId values, and call:</span>
+<span class="code-keyword">curl</span> <span class="code-flag">-X POST</span> <span class="code-string">"https://www.okfile.com/api/site/complete"</span> \
+  <span class="code-flag">-H</span> <span class="code-string">"Content-Type: application/json"</span> \
+  <span class="code-flag">--data</span> <span class="code-string">'{"siteId":"st_xxxx","siteToken":"token_xxxx","files":[{"relativePath":"docs/getting-started.md","fileId":"a3k7m92x"},{"relativePath":"assets/app.css","fileId":"b8f2k19a"},{"relativePath":"images/logo.png","fileId":"c9d0e1f2"}]}'</span></code></pre>
   </div>
 
   <!-- POST Upload -->
@@ -462,6 +507,72 @@
 }</code></pre>
   </div>
 
+  <div class="code-block">
+    <div class="code-header">
+      <span class="label"><span class="method method-post">POST</span>&nbsp;/api/site/prepare</span>
+      <button onclick="cpCode(this)"><span class="zh">复制</span><span class="en">Copy</span></button>
+    </div>
+    <pre class="zh"><code><span class="code-comment"># 为静态站点目录申请发布会话</span>
+<span class="code-comment"># 如果没有根目录 index.html，就不要传 entryPath，也不要额外生成目录首页</span>
+<span class="code-keyword">curl</span> <span class="code-flag">-X POST</span> <span class="code-string">"https://www.okfile.com/api/site/prepare"</span> \
+  <span class="code-flag">-H</span> <span class="code-string">"Content-Type: application/json"</span> \
+  <span class="code-flag">--data</span> <span class="code-string">'{"siteName":"docs-site","files":[{"path":"docs/getting-started.md","size":1200,"contentType":"text/markdown; charset=utf-8"},{"path":"assets/app.css","size":3200,"contentType":"text/css; charset=utf-8"},{"path":"images/logo.png","size":4200,"contentType":"image/png"}]}'</span>
+
+<span class="code-comment"># 响应:</span>
+{
+  <span class="code-string">"success"</span>: true,
+  <span class="code-string">"siteId"</span>: <span class="code-string">"st_xxxx"</span>,
+  <span class="code-string">"siteToken"</span>: <span class="code-string">"token_xxxx"</span>,
+  <span class="code-string">"uploadMode"</span>: <span class="code-string">"file-map"</span>
+}</code></pre>
+    <pre class="en"><code><span class="code-comment"># Create a publish session for a static site folder</span>
+<span class="code-comment"># If there is no root index.html, omit entryPath and do not generate a synthetic listing page</span>
+<span class="code-keyword">curl</span> <span class="code-flag">-X POST</span> <span class="code-string">"https://www.okfile.com/api/site/prepare"</span> \
+  <span class="code-flag">-H</span> <span class="code-string">"Content-Type: application/json"</span> \
+  <span class="code-flag">--data</span> <span class="code-string">'{"siteName":"docs-site","files":[{"path":"docs/getting-started.md","size":1200,"contentType":"text/markdown; charset=utf-8"},{"path":"assets/app.css","size":3200,"contentType":"text/css; charset=utf-8"},{"path":"images/logo.png","size":4200,"contentType":"image/png"}]}'</span>
+
+<span class="code-comment"># Response:</span>
+{
+  <span class="code-string">"success"</span>: true,
+  <span class="code-string">"siteId"</span>: <span class="code-string">"st_xxxx"</span>,
+  <span class="code-string">"siteToken"</span>: <span class="code-string">"token_xxxx"</span>,
+  <span class="code-string">"uploadMode"</span>: <span class="code-string">"file-map"</span>
+}</code></pre>
+  </div>
+
+  <div class="code-block">
+    <div class="code-header">
+      <span class="label"><span class="method method-post">POST</span>&nbsp;/api/site/complete</span>
+      <button onclick="cpCode(this)"><span class="zh">复制</span><span class="en">Copy</span></button>
+    </div>
+    <pre class="zh"><code><span class="code-comment"># 完成站点发布；files 中映射相对路径与上传后 fileId</span>
+<span class="code-comment"># 子目录路径会被原样保留并可直接访问</span>
+<span class="code-keyword">curl</span> <span class="code-flag">-X POST</span> <span class="code-string">"https://www.okfile.com/api/site/complete"</span> \
+  <span class="code-flag">-H</span> <span class="code-string">"Content-Type: application/json"</span> \
+  <span class="code-flag">--data</span> <span class="code-string">'{"siteId":"st_xxxx","siteToken":"token_xxxx","files":[{"relativePath":"docs/getting-started.md","fileId":"a3k7m92x"},{"relativePath":"assets/app.css","fileId":"b8f2k19a"},{"relativePath":"images/logo.png","fileId":"c9d0e1f2"}]}'</span>
+
+<span class="code-comment"># 响应:</span>
+{
+  <span class="code-string">"success"</span>: true,
+  <span class="code-string">"siteId"</span>: <span class="code-string">"st_xxxx"</span>,
+  <span class="code-string">"siteUrl"</span>: <span class="code-url">"https://st-ab12cd34.ok26.org/"</span>,
+  <span class="code-string">"entryUrl"</span>: <span class="code-url">"https://st-ab12cd34.ok26.org/"</span>
+}</code></pre>
+    <pre class="en"><code><span class="code-comment"># Finalize site publishing; map each relative path to its uploaded fileId</span>
+<span class="code-comment"># Nested subdirectory paths are preserved and remain directly accessible</span>
+<span class="code-keyword">curl</span> <span class="code-flag">-X POST</span> <span class="code-string">"https://www.okfile.com/api/site/complete"</span> \
+  <span class="code-flag">-H</span> <span class="code-string">"Content-Type: application/json"</span> \
+  <span class="code-flag">--data</span> <span class="code-string">'{"siteId":"st_xxxx","siteToken":"token_xxxx","files":[{"relativePath":"docs/getting-started.md","fileId":"a3k7m92x"},{"relativePath":"assets/app.css","fileId":"b8f2k19a"},{"relativePath":"images/logo.png","fileId":"c9d0e1f2"}]}'</span>
+
+<span class="code-comment"># Response:</span>
+{
+  <span class="code-string">"success"</span>: true,
+  <span class="code-string">"siteId"</span>: <span class="code-string">"st_xxxx"</span>,
+  <span class="code-string">"siteUrl"</span>: <span class="code-url">"https://st-ab12cd34.ok26.org/"</span>,
+  <span class="code-string">"entryUrl"</span>: <span class="code-url">"https://st-ab12cd34.ok26.org/"</span>
+}</code></pre>
+  </div>
+
   <!-- GET View -->
   <div class="code-block">
     <div class="code-header">
@@ -488,8 +599,12 @@
     <tr><td><span class="method">PUT</span></td><td><code>uploadUrl / parts[].uploadUrl</code></td><td><span class="zh">把文件内容或分片直接写入 prepare 返回的动态上载地址</span><span class="en">Write file content or part directly to dynamic upload URL returned by prepare</span></td></tr>
     <tr><td><span class="method method-post">POST</span></td><td><code>/api/upload/complete</code></td><td><span class="zh">确认文件已上载；单传和分片都只需 id，分片由后台自动合并</span><span class="en">Confirm file uploaded; both modes only need id, multipart merged automatically by backend</span></td></tr>
     <tr><td><span class="method method-get">GET</span></td><td><code>/api/upload/status/{id}</code></td><td><span class="zh">查询分片上载任务的进度与状态</span><span class="en">Query progress and status of a multipart upload task</span></td></tr>
+    <tr><td><span class="method method-post">POST</span></td><td><code>/api/site/prepare</code></td><td><span class="zh">为静态站点目录创建发布会话，提交站点名、可选入口文件和完整文件清单；没有根 `index.html` 时不要额外生成它，直接省略 `entryPath` 即可</span><span class="en">Create a publish session for a static site folder with the site name, optional entry file, and full file manifest; if there is no root `index.html`, do not generate one and simply omit `entryPath`</span></td></tr>
+    <tr><td><span class="method method-post">POST</span></td><td><code>/api/site/complete</code></td><td><span class="zh">提交 {relativePath, fileId} 映射完成站点发布，子目录路径会保留，返回 {siteUrl, entryUrl}</span><span class="en">Submit the {relativePath, fileId} mapping to finalize site publishing, preserving nested subdirectory paths, and return {siteUrl, entryUrl}</span></td></tr>
     <tr><td><span class="method method-get">GET</span></td><td><code>/i/{id}</code></td><td><span class="zh">默认文件直链，直接返回原始文件</span><span class="en">Default file direct link, returns original file directly</span></td></tr>
     <tr><td><span class="method method-get">GET</span></td><td><code>/i/{id}?play=1</code></td><td><span class="zh">预览/播放页面（图片、视频、PDF）</span><span class="en">Preview/Playback page (Image, Video, PDF)</span></td></tr>
+    <tr><td><span class="method method-get">GET</span></td><td><code>https://{subdomain}.ok26.org/</code></td><td><span class="zh">站点根路径；有根 `index.html` 时直接渲染，否则由 OkFile 自动显示目录列表</span><span class="en">Published site root; renders root `index.html` when present, otherwise OkFile automatically shows a directory listing</span></td></tr>
+    <tr><td><span class="method method-get">GET</span></td><td><code>https://{subdomain}.ok26.org/docs/guide/</code></td><td><span class="zh">站点子目录路径；可直接访问已发布的嵌套目录和文件</span><span class="en">Published site subdirectory path; nested directories and files remain directly accessible</span></td></tr>
   </table>
 </section>
 

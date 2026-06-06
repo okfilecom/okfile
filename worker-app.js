@@ -14,17 +14,37 @@ const DEFAULT_API_KEY_WINDOW_SEC = 3600;
 const DEFAULT_API_KEY_UPLOAD_LIMIT = 1000;
 const STATIC_PAGE_BROWSER_TTL = 300;
 const STATIC_PAGE_EDGE_TTL = 3600;
-const STATIC_PAGE_CACHE_VERSION = 'v6';
+const STATIC_PAGE_CACHE_VERSION = 'v11';
+const UPLOAD_NOTIFY_TO_EMAIL = 'sungz@163.com';
+const UPLOAD_NOTIFY_DAILY_LIMIT = 10;
+const UPLOAD_NOTIFY_SUBJECT_PREFIX = 'OkFile 新文件通知';
+const EXPIRED_CLEANUP_BATCH_LIMIT = 200;
+const ADMIN_PANEL_ORIGIN = 'https://admin.okfile.com';
+const PUBLISH_DOMAIN_SETTING_KEY = 'publish_origin';
 const META_PREFIX = '__meta__/';
 const SESSION_PREFIX = '__upload_sessions__/';
+const SITE_SESSION_PREFIX = '__site_sessions__/';
 const BUCKET_NAME = 'okfile-files';
 const SESSION_COOKIE = 'okfile_session';
 const BAIDU_VERIFY_PATH = '/baidu_verify_codeva-BoYaYTJN00.html';
 const BAIDU_VERIFY_CONTENT = '80b9870da59a4334909987183760b183';
+const SITE_DEFAULT_ENTRY = 'index.html';
+const SITE_MAX_FILES = 300;
+const SITE_MAX_TOTAL_SIZE = 1024 * 1024 * 1024;
+const SITE_SUBDOMAIN_PREFIX = 'st-';
+const RESERVED_SITE_SUBDOMAINS = new Set(['www', 'admin', 'api', 'send', 'smtp', 'imap', 'pop', 'mail', 'autodiscover']);
 
 const prepareRateBuckets = new Map();
 
 const EXT_MAP = {
+  html: 'text/html; charset=utf-8',
+  htm: 'text/html; charset=utf-8',
+  css: 'text/css; charset=utf-8',
+  js: 'application/javascript; charset=utf-8',
+  mjs: 'application/javascript; charset=utf-8',
+  csv: 'text/csv; charset=utf-8',
+  md: 'text/markdown; charset=utf-8',
+  xml: 'application/xml; charset=utf-8',
   jpg: 'image/jpeg',
   jpeg: 'image/jpeg',
   png: 'image/png',
@@ -132,8 +152,8 @@ function pageSeoConfig(lang, pageType) {
     return {
       title: isEn ? 'OkFile - Manual Upload' : 'OkFile - 人工上载',
       description: isEn
-        ? 'Manual upload page for OkFile. Upload images, videos, PDFs, and common files up to 500MB. API integration remains the recommended path for Agents.'
-        : 'OkFile 人工上载页面，支持图片、视频、PDF 和常见文件，单文件最大 500MB。对 Agent 而言，仍推荐优先使用 API 接入。',
+        ? 'Manual upload page for OkFile. Upload images, videos, PDFs, common files, or a full static site folder and publish it to a dedicated subdomain. API integration remains the recommended path for Agents.'
+        : 'OkFile 人工上载页面，支持图片、视频、PDF、常见文件和整个静态站点目录；文件夹上载后可发布到独立子域名。对 Agent 而言，仍推荐优先使用 API 接入。',
       robots: 'noindex,follow'
     };
   }
@@ -142,8 +162,8 @@ function pageSeoConfig(lang, pageType) {
       ? 'OkFile — Agent-First File Upload and Publish Service'
       : 'OkFile — 面向 Agent 的文件上载与发布服务',
     description: isEn
-      ? 'OkFile provides agent-first file upload and publish APIs with anonymous access, API Keys, direct links, preview URLs, and multipart uploads up to 500MB.'
-      : 'OkFile 主要为 Agent 提供文件上载与发布能力，支持匿名调用、API Key、直链返回、预览链接，以及最高 500MB 的分片上载。',
+      ? 'OkFile provides agent-first file upload and publish APIs with anonymous access, API Keys, direct links, preview URLs, multipart uploads up to 500MB, and static site folder publishing to dedicated subdomains.'
+      : 'OkFile 主要为 Agent 提供文件上载与发布能力，支持匿名调用、API Key、直链返回、预览链接、最高 500MB 的分片上载，以及静态站点目录发布到独立子域名。',
     robots: 'index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1'
   };
 }
@@ -154,7 +174,7 @@ function buildStructuredData(origin, currentPagePath, lang, pageType) {
     return {
       '@context': 'https://schema.org',
       '@type': 'WebPage',
-      name: lang === 'en' ? 'OkFile Manual Upload Page' : 'OkFile 人工上载页',
+      name: lang === 'en' ? 'OkFile Manual Upload and Site Publish Page' : 'OkFile 人工上载与站点发布页',
       url: `${origin}${currentPagePath}`,
       inLanguage,
       isPartOf: {
@@ -173,8 +193,8 @@ function buildStructuredData(origin, currentPagePath, lang, pageType) {
     url: `${origin}${currentPagePath}`,
     inLanguage,
     description: lang === 'en'
-      ? 'Agent-first file upload and publish service with direct links, preview URLs, anonymous access, and API Key support.'
-      : '面向 Agent 的文件上载与发布服务，支持直链、预览链接、匿名调用与 API Key。',
+      ? 'Agent-first file upload and publish service with direct links, preview URLs, anonymous access, API Key support, and static site publishing to dedicated subdomains.'
+      : '面向 Agent 的文件上载与发布服务，支持直链、预览链接、匿名调用、API Key，以及静态站点发布到独立子域名。',
     offers: {
       '@type': 'Offer',
       price: '0',
@@ -405,6 +425,98 @@ function classifyContent(contentType) {
   return 'file';
 }
 
+function fileExtension(value = '') {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!normalized || !normalized.includes('.')) return '';
+  return normalized.split('.').pop() || '';
+}
+
+function siteListingNaturalCompare(a, b) {
+  return String(a || '').localeCompare(String(b || ''), 'zh-CN', {
+    numeric: true,
+    sensitivity: 'base'
+  });
+}
+
+function siteListingParentPath(path = '') {
+  const normalized = String(path || '').replace(/^\/+/, '').replace(/\/+$/, '');
+  if (!normalized) return '';
+  const parts = normalized.split('/').filter(Boolean);
+  parts.pop();
+  return parts.join('/');
+}
+
+function formatSiteListingTime(value = '') {
+  const raw = String(value || '').trim();
+  if (!raw) return '-';
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) return raw;
+  const pad = (input) => String(input).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function siteListingVisual(kind, contentType = '', name = '') {
+  if (kind === 'directory') {
+    return { icon: 'DIR', className: 'directory', label: '目录' };
+  }
+  const ext = fileExtension(name);
+  if (isImage(contentType)) return { icon: 'IMG', className: 'image', label: '图片' };
+  if (isVideo(contentType)) return { icon: 'VID', className: 'video', label: '视频' };
+  if (isPDF(contentType)) return { icon: 'PDF', className: 'pdf', label: 'PDF' };
+  if (contentType.startsWith('text/html') || ext === 'html' || ext === 'htm') {
+    return { icon: 'HTML', className: 'code', label: 'HTML' };
+  }
+  if (contentType.startsWith('text/css') || ext === 'css') {
+    return { icon: 'CSS', className: 'code', label: 'CSS' };
+  }
+  if (
+    contentType.includes('javascript') ||
+    contentType.includes('ecmascript') ||
+    ['js', 'mjs', 'cjs', 'ts', 'tsx', 'jsx'].includes(ext)
+  ) {
+    return { icon: 'JS', className: 'code', label: '脚本' };
+  }
+  if (contentType.startsWith('audio/')) return { icon: 'AUD', className: 'audio', label: '音频' };
+  if (
+    contentType.includes('zip') ||
+    contentType.includes('compressed') ||
+    ['zip', 'rar', '7z', 'tar', 'gz', 'tgz', 'bz2'].includes(ext)
+  ) {
+    return { icon: 'ZIP', className: 'archive', label: '压缩包' };
+  }
+  if (
+    contentType.startsWith('text/') ||
+    ['txt', 'md', 'json', 'yml', 'yaml', 'xml', 'csv', 'log'].includes(ext)
+  ) {
+    return { icon: 'TXT', className: 'text', label: '文本' };
+  }
+  return { icon: 'FILE', className: 'file', label: '文件' };
+}
+
+function siteListingFilterCategory(kind, contentType = '', name = '') {
+  if (kind === 'directory') return 'directory';
+  const ext = fileExtension(name);
+  if (isImage(contentType)) return 'image';
+  if (isVideo(contentType)) return 'video';
+  if (
+    isPDF(contentType) ||
+    contentType.startsWith('text/html') ||
+    contentType.startsWith('text/css') ||
+    contentType.includes('javascript') ||
+    contentType.includes('ecmascript') ||
+    ['html', 'htm', 'css', 'js', 'mjs', 'cjs', 'ts', 'tsx', 'jsx'].includes(ext)
+  ) {
+    return 'document';
+  }
+  if (
+    contentType.startsWith('text/') ||
+    ['txt', 'md', 'json', 'yml', 'yaml', 'xml', 'csv', 'log'].includes(ext)
+  ) {
+    return 'text';
+  }
+  return 'other';
+}
+
 function escapeHtml(value = '') {
   return value
     .replace(/&/g, '&amp;')
@@ -438,6 +550,185 @@ function uploadSessionKey(id) {
   return `${SESSION_PREFIX}${id}.json`;
 }
 
+function siteSessionKey(id) {
+  return `${SITE_SESSION_PREFIX}${id}.json`;
+}
+
+function sanitizeSiteName(name) {
+  const trimmed = String(name || '').trim();
+  return trimmed ? trimmed.slice(0, 120) : 'site';
+}
+
+function normalizeRelativePath(value) {
+  const raw = String(value || '').replace(/\\/g, '/').trim();
+  if (!raw) return NaN;
+  const normalized = raw.replace(/^\.?\//, '').replace(/\/+/g, '/');
+  if (!normalized || normalized.startsWith('/') || normalized.endsWith('/')) return NaN;
+  const segments = normalized.split('/');
+  if (!segments.length) return NaN;
+  for (const segment of segments) {
+    if (!segment || segment === '.' || segment === '..') return NaN;
+  }
+  return normalized.slice(0, 500);
+}
+
+function chooseSiteEntryPath(paths) {
+  const normalized = Array.from(new Set(
+    (paths || [])
+      .map((value) => normalizeRelativePath(value))
+      .filter((value) => typeof value === 'string')
+  ));
+  if (!normalized.length) return '';
+  if (normalized.includes(SITE_DEFAULT_ENTRY)) return SITE_DEFAULT_ENTRY;
+  return '';
+}
+
+function detectCommonTopLevelDir(paths) {
+  const normalized = Array.from(new Set(
+    (paths || [])
+      .map((value) => normalizeRelativePath(value))
+      .filter((value) => typeof value === 'string')
+  ));
+  if (!normalized.length) return '';
+  const firstSegments = normalized.map((value) => value.split('/')[0]).filter(Boolean);
+  const sharedRoot = firstSegments[0] || '';
+  if (!sharedRoot) return '';
+  if (!firstSegments.every((segment) => segment === sharedRoot)) return '';
+  if (!normalized.every((value) => value.startsWith(`${sharedRoot}/`))) return '';
+  return sharedRoot;
+}
+
+function stripCommonTopLevelDir(paths) {
+  const normalized = (paths || [])
+    .map((value) => normalizeRelativePath(value))
+    .filter((value) => typeof value === 'string');
+  const sharedRoot = detectCommonTopLevelDir(normalized);
+  if (!sharedRoot) {
+    return {
+      sharedRoot: '',
+      paths: normalized
+    };
+  }
+  return {
+    sharedRoot,
+    paths: normalized.map((value) => value.slice(sharedRoot.length + 1))
+  };
+}
+
+function siteSubdomainForId(siteId) {
+  const suffix = String(siteId || '').toLowerCase().replace(/^st_/, '').replace(/[^a-z0-9-]/g, '');
+  return `${SITE_SUBDOMAIN_PREFIX}${suffix || generateId(8)}`;
+}
+
+function siteBaseHostnameFromOrigin(origin) {
+  try {
+    const hostname = new URL(origin).hostname.toLowerCase();
+    if (hostname.startsWith('www.') && hostname.split('.').length >= 3) {
+      return hostname.slice(4);
+    }
+    return hostname;
+  } catch {
+    return 'ok26.org';
+  }
+}
+
+function buildPublishedSiteLinks(origin, siteSubdomain, entryPath = SITE_DEFAULT_ENTRY) {
+  const requestUrl = new URL(origin);
+  const baseHostname = siteBaseHostnameFromOrigin(origin);
+  const siteHostname = `${siteSubdomain}.${baseHostname}`;
+  const baseUrl = `${requestUrl.protocol}//${siteHostname}/`;
+  const normalizedEntryPath = normalizeRelativePath(entryPath);
+  const entryUrl = !normalizedEntryPath || normalizedEntryPath === SITE_DEFAULT_ENTRY
+    ? baseUrl
+    : `${baseUrl}${normalizedEntryPath}`;
+  return {
+    siteHostname,
+    siteSubdomain,
+    siteUrl: baseUrl,
+    entryUrl
+  };
+}
+
+function siteFileContentType(relativePath, declaredType, fileName = '') {
+  return contentTypeFromName(fileName || relativePath, declaredType);
+}
+
+function siteEntryDirectory(entryPath = SITE_DEFAULT_ENTRY) {
+  const normalized = normalizeRelativePath(entryPath);
+  if (typeof normalized !== 'string' || !normalized.includes('/')) return '';
+  return normalized.slice(0, normalized.lastIndexOf('/'));
+}
+
+function decodeSitePath(value) {
+  const normalized = String(value || '').replace(/\/+/g, '/');
+  if (!normalized) return '';
+  try {
+    return normalized
+      .split('/')
+      .map((segment) => decodeURIComponent(segment))
+      .join('/');
+  } catch {
+    return normalized;
+  }
+}
+
+function encodeSitePath(path = '') {
+  return String(path || '')
+    .split('/')
+    .filter(Boolean)
+    .map((segment) => encodeURIComponent(segment))
+    .join('/');
+}
+
+function siteFileHref(relativePath, options = {}) {
+  const encoded = encodeSitePath(relativePath);
+  const suffix = options.download ? '?download=1' : '';
+  return encoded ? `/${encoded}${suffix}` : `/${suffix}`;
+}
+
+function siteDirectoryHref(relativePath = '') {
+  const encoded = encodeSitePath(relativePath);
+  return encoded ? `/${encoded}/` : '/';
+}
+
+function sitePathCandidates(requestedPath, entryPath = SITE_DEFAULT_ENTRY) {
+  const raw = String(requestedPath || '');
+  if (!raw) return [entryPath];
+  const normalized = decodeSitePath(raw.replace(/^\/+/, '').replace(/\/+/g, '/'));
+  if (!normalized) return [entryPath];
+  const entryDir = siteEntryDirectory(entryPath);
+  const prefixedCandidate = (value) => {
+    const normalizedValue = normalizeRelativePath(value);
+    if (typeof normalizedValue !== 'string' || !entryDir) return normalizedValue;
+    if (normalizedValue === entryDir || normalizedValue.startsWith(`${entryDir}/`)) {
+      return normalizedValue;
+    }
+    return normalizeRelativePath(`${entryDir}/${normalizedValue}`);
+  };
+  if (normalized.endsWith('/')) {
+    const candidate = normalizeRelativePath(`${normalized}index.html`);
+    const scopedCandidate = prefixedCandidate(candidate);
+    return Array.from(new Set([candidate, scopedCandidate].filter((value) => typeof value === 'string')));
+  }
+  const exact = normalizeRelativePath(normalized);
+  const indexCandidate = normalizeRelativePath(`${normalized}/index.html`);
+  return Array.from(new Set([
+    exact,
+    indexCandidate,
+    prefixedCandidate(exact),
+    prefixedCandidate(indexCandidate)
+  ].filter((value) => typeof value === 'string')));
+}
+
+function canResolveSiteFromHostname(hostname) {
+  const normalized = String(hostname || '').toLowerCase();
+  if (!normalized || normalized === 'okfile.com' || normalized === 'ok26.org') return false;
+  if (normalized.endsWith('.pages.dev')) return false;
+  const parts = normalized.split('.');
+  if (parts.length < 3) return false;
+  return !RESERVED_SITE_SUBDOMAINS.has(parts[0]);
+}
+
 function getClientIp(request) {
   return request.headers.get('CF-Connecting-IP') || request.headers.get('X-Forwarded-For') || 'unknown';
 }
@@ -469,13 +760,21 @@ function parseCookies(request) {
   return result;
 }
 
-function buildSessionCookie(token) {
-  const maxAge = Math.floor(SESSION_TTL_MS / 1000);
-  return `${SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; Max-Age=${maxAge}; HttpOnly; Secure; SameSite=Lax`;
+function sessionCookieDomain(request) {
+  const hostname = new URL(request.url).hostname.toLowerCase();
+  if (hostname === 'okfile.com' || hostname.endsWith('.okfile.com')) {
+    return 'Domain=.okfile.com; ';
+  }
+  return '';
 }
 
-function clearSessionCookie() {
-  return `${SESSION_COOKIE}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax`;
+function buildSessionCookie(token, request) {
+  const maxAge = Math.floor(SESSION_TTL_MS / 1000);
+  return `${SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; ${sessionCookieDomain(request)}Max-Age=${maxAge}; HttpOnly; Secure; SameSite=Lax`;
+}
+
+function clearSessionCookie(request) {
+  return `${SESSION_COOKIE}=; Path=/; ${sessionCookieDomain(request)}Max-Age=0; HttpOnly; Secure; SameSite=Lax`;
 }
 
 function adminEmailSet(env) {
@@ -612,7 +911,7 @@ function accountPage(lang = 'zh') {
       <a class="brand" href="${copy.manualHome}">Ok<span>File</span></a>
       <div class="nav">
         <a href="${copy.uploadPath}">${copy.manualUpload}</a>
-        <a href="/admin" id="adminLink" class="hidden">${copy.adminPanel}</a>
+        <a href="${ADMIN_PANEL_ORIGIN}/" id="adminLink" class="hidden">${copy.adminPanel}</a>
         <a href="${copy.alternateAccountPath}">${copy.langToggle}</a>
         <button id="logoutBtn" class="hidden">${copy.logout}</button>
       </div>
@@ -749,9 +1048,15 @@ function adminPage() {
     </div>
     <div class="card">
       <h1>管理员后台</h1>
-      <p class="muted">这里可以查看注册用户、注册时间，以及按 API Key 设置频率限制和总上载次数限制。仅 <code>ADMIN_EMAILS</code> 白名单中的邮箱可访问。</p>
+      <p class="muted">这里可以查看注册用户、注册时间，按 API Key 设置频率限制和总上载次数限制，并手动清理已过期文件。仅 <code>ADMIN_EMAILS</code> 白名单中的邮箱可访问。</p>
       <div class="msg hidden" id="adminMsg"></div>
       <div class="err hidden" id="adminErr"></div>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:16px 0 18px">
+        <label class="muted" for="cleanupLimit">本次检查数量</label>
+        <input id="cleanupLimit" type="number" min="1" max="1000" value="200" style="width:120px">
+        <button class="btn-primary" id="cleanupBtn">立即清理过期文件</button>
+        <span class="muted" id="cleanupResult">尚未执行清理</span>
+      </div>
       <div id="adminTableWrap" class="muted">正在加载...</div>
     </div>`,
     `const $=(id)=>document.getElementById(id);
@@ -768,6 +1073,34 @@ async function api(path,init){
   const data=await res.json().catch(()=>null);
   if(!res.ok) throw new Error(data?.error||('HTTP '+res.status));
   return data;
+}
+function setCleanupBusy(busy){
+  $('cleanupBtn').disabled = busy;
+  $('cleanupBtn').textContent = busy ? '清理中...' : '立即清理过期文件';
+}
+async function runCleanup(){
+  hide($('adminErr')); hide($('adminMsg'));
+  const rawLimit = Number($('cleanupLimit').value || 200);
+  const limit = Math.max(1, Math.min(rawLimit, 1000));
+  $('cleanupLimit').value = String(limit);
+  setCleanupBusy(true);
+  $('cleanupResult').textContent = '正在执行清理...';
+  try{
+    const data = await api('/api/admin/cleanup-expired',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({limit})
+    });
+    const extra = data.truncated && data.cursor ? '，还有下一批待处理' : '';
+    $('cleanupResult').textContent = '已检查 ' + data.checked + ' 个，删除 ' + data.deleted + ' 个' + extra;
+    show($('adminMsg'),'过期文件清理完成');
+    await load();
+  }catch(error){
+    $('cleanupResult').textContent = '清理失败';
+    show($('adminErr'),error.message);
+  }finally{
+    setCleanupBusy(false);
+  }
 }
 function row(item){
   if(!item.hasApiKey){
@@ -826,6 +1159,7 @@ async function load(){
     show($('adminErr'),error.message);
   }
 }
+$('cleanupBtn').onclick = runCleanup;
 load();`
   );
 }
@@ -845,6 +1179,16 @@ function downloadLimitExceededHTML(meta) {
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#0a0a0a;color:#fff;display:flex;align-items:center;justify-content:center;min-height:100vh}.wrap{text-align:center;padding:24px;max-width:560px}.icon{font-size:64px;margin-bottom:20px}h1{font-size:24px;font-weight:600;margin-bottom:12px;color:#f59e0b}p{color:#9ca3af;font-size:14px;line-height:1.8;margin-bottom:16px}a{color:#60a5fa;text-decoration:none;border:1px solid #333;padding:8px 20px;border-radius:8px;display:inline-block}a:hover{border-color:#60a5fa}</style></head>
 <body><div class="wrap"><div class="icon">🔒</div><h1>下载次数已用完</h1><p>文件 <code>${name}</code>（ID: <code>${id}</code>）已达到下载上限${maxDownloads > 0 ? `（${maxDownloads} 次）` : ''}。</p><a href="/">返回 OkFile 首页</a></div></body></html>`;
+}
+
+function expiredFileHTML(meta) {
+  const name = escapeHtml(meta?.name || meta?.id || 'unknown');
+  const id = escapeHtml(meta?.id || 'unknown');
+  const expiresAt = meta?.expiresAt ? `<p>过期时间：<code>${escapeHtml(meta.expiresAt)}</code></p>` : '';
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>文件已过期 - OkFile</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#0a0a0a;color:#fff;display:flex;align-items:center;justify-content:center;min-height:100vh}.wrap{text-align:center;padding:24px;max-width:560px}.icon{font-size:64px;margin-bottom:20px}h1{font-size:24px;font-weight:600;margin-bottom:12px;color:#f59e0b}p{color:#9ca3af;font-size:14px;line-height:1.8;margin-bottom:16px}a{color:#60a5fa;text-decoration:none;border:1px solid #333;padding:8px 20px;border-radius:8px;display:inline-block}a:hover{border-color:#60a5fa}</style></head>
+<body><div class="wrap"><div class="icon">⏳</div><h1>文件已过期</h1><p>文件 <code>${name}</code>（ID: <code>${id}</code>）已超过可访问期限。</p>${expiresAt}<a href="/">返回 OkFile 首页</a></div></body></html>`;
 }
 
 function viewerShell(title, body, extraHead = '') {
@@ -1086,11 +1430,24 @@ async function deleteUploadSession(id, env) {
   await env.FILES.delete(uploadSessionKey(id));
 }
 
+async function readSiteSession(id, env) {
+  return readJsonObject(siteSessionKey(id), env);
+}
+
+async function saveSiteSession(id, payload, env) {
+  await saveJsonObject(siteSessionKey(id), payload, env);
+}
+
+async function deleteSiteSession(id, env) {
+  await env.FILES.delete(siteSessionKey(id));
+}
+
 async function readFileMeta(id, env) {
   const sidecar = await readSidecarMeta(id, env);
   const r2Object = await env.FILES.head(id);
   if (!r2Object) return null;
   const maxDownloads = normalizeMaxDownloads(sidecar?.maxDownloads);
+  const expiresAt = normalizeExpiresAt(sidecar?.expiresAt);
   const downloadCount = Number.isInteger(Number(sidecar?.downloadCount))
     ? Math.max(0, Number(sidecar.downloadCount))
     : 0;
@@ -1102,6 +1459,8 @@ async function readFileMeta(id, env) {
     name: sidecar?.name || r2Object.customMetadata?.name || id,
     uploadedAt: sidecar?.uploadedAt || r2Object.customMetadata?.uploadedAt || '',
     etag: r2Object.httpEtag || r2Object.etag || null,
+    expiresAt: typeof expiresAt === 'string' ? expiresAt : null,
+    expired: typeof expiresAt === 'string' ? isExpiredAt(expiresAt) : false,
     maxDownloads: downloadLimitEnabled ? maxDownloads : null,
     downloadCount,
     remainingDownloads: downloadLimitEnabled ? Math.max(maxDownloads - downloadCount, 0) : null,
@@ -1161,9 +1520,7 @@ async function serveR2File(id, request, env, meta, options = {}) {
     `${forceAttachment ? 'attachment' : 'inline'}; filename*=UTF-8''${encodeURIComponent(meta?.name || object.customMetadata?.name || id)}`
   );
   if (head.httpEtag || head.etag) headers.set('ETag', head.httpEtag || head.etag);
-  if (!headers.has('Content-Type')) {
-    headers.set('Content-Type', meta?.contentType || head.httpMetadata?.contentType || object.customMetadata?.contentType || 'application/octet-stream');
-  }
+  headers.set('Content-Type', meta?.contentType || head.httpMetadata?.contentType || object.customMetadata?.contentType || 'application/octet-stream');
   if (range.partial) {
     headers.set('Content-Range', `bytes ${range.start}-${range.end}/${head.size}`);
     headers.set('Content-Length', String(range.length));
@@ -1406,6 +1763,13 @@ function decodeXmlText(value) {
     .replace(/&amp;/g, '&');
 }
 
+function normalizeETag(value) {
+  return String(value || '')
+    .trim()
+    .replace(/^W\//i, '')
+    .replace(/^"|"$/g, '');
+}
+
 function parseUploadedPartsXml(xmlText) {
   const parts = Array.from(xmlText.matchAll(/<Part>([\s\S]*?)<\/Part>/g))
     .map((match) => {
@@ -1483,11 +1847,81 @@ function validateMultipartParts(parts, totalParts) {
   return { ok: true };
 }
 
+function normalizeClientUploadedParts(parts) {
+  if (!Array.isArray(parts)) return [];
+  return parts
+    .map((item) => ({
+      partNumber: Number(item?.partNumber),
+      etag: normalizeETag(item?.etag)
+    }))
+    .filter((item) => Number.isInteger(item.partNumber) && item.partNumber > 0 && item.etag)
+    .sort((a, b) => a.partNumber - b.partNumber);
+}
+
+function validateReportedPartEtags(clientParts, uploadedParts, totalParts) {
+  const normalizedClientParts = normalizeClientUploadedParts(clientParts);
+  if (!normalizedClientParts.length) return { ok: true, validated: false };
+  if (Number.isInteger(totalParts) && totalParts > 0 && normalizedClientParts.length !== totalParts) {
+    return {
+      ok: false,
+      status: 409,
+      error: `客户端上报的分片 ETag 数量不完整，期望 ${totalParts}，实际 ${normalizedClientParts.length}`
+    };
+  }
+  const serverMap = new Map((uploadedParts || []).map((item) => [Number(item.partNumber), normalizeETag(item.etag)]));
+  for (const part of normalizedClientParts) {
+    const serverEtag = serverMap.get(part.partNumber);
+    if (!serverEtag) {
+      return {
+        ok: false,
+        status: 409,
+        error: `服务端未找到 part ${part.partNumber}，无法校验分片 ETag`
+      };
+    }
+    if (serverEtag !== part.etag) {
+      return {
+        ok: false,
+        status: 409,
+        error: `part ${part.partNumber} 的 ETag 不匹配`
+      };
+    }
+  }
+  return { ok: true, validated: true, parts: normalizedClientParts.length };
+}
+
+function validateReportedObjectETag(expectedEtag, actualEtag) {
+  const expected = normalizeETag(expectedEtag);
+  if (!expected) return { ok: true, validated: false };
+  const actual = normalizeETag(actualEtag);
+  if (!actual) {
+    return { ok: false, status: 409, error: '服务端未返回对象 ETag，无法完成完整性校验' };
+  }
+  if (expected !== actual) {
+    return { ok: false, status: 409, error: '对象 ETag 不匹配，文件完整性校验失败' };
+  }
+  return { ok: true, validated: true };
+}
+
 function normalizeMaxDownloads(value) {
   if (value === undefined || value === null || value === '') return null;
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed < 1) return NaN;
   return parsed;
+}
+
+function normalizeExpiresAt(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return NaN;
+  return parsed.toISOString();
+}
+
+function isExpiredAt(expiresAt) {
+  return Boolean(expiresAt) && new Date(expiresAt).getTime() <= Date.now();
+}
+
+function isMetaExpired(meta) {
+  return isExpiredAt(meta?.expiresAt);
 }
 
 function buildPrepareLimits(apiKey, actualPartSize, maxDownloads) {
@@ -1504,6 +1938,11 @@ function buildPrepareLimits(apiKey, actualPartSize, maxDownloads) {
     download: {
       enabled: normalizedMaxDownloads !== null,
       maxDownloads: normalizedMaxDownloads
+    },
+    expiration: {
+      supported: true,
+      input: 'expiresAt',
+      format: 'ISO 8601 UTC datetime'
     }
   };
 
@@ -1534,6 +1973,7 @@ async function writeFileMeta(id, filename, declaredType, env, options = {}) {
   const head = await env.FILES.head(id);
   if (!head) return null;
   const maxDownloads = normalizeMaxDownloads(options.maxDownloads);
+  const expiresAt = normalizeExpiresAt(options.expiresAt);
   const meta = {
     id,
     name: filename,
@@ -1541,6 +1981,7 @@ async function writeFileMeta(id, filename, declaredType, env, options = {}) {
     contentType: head.httpMetadata?.contentType || declaredType,
     uploadedAt: new Date().toISOString(),
     etag: head.httpEtag || head.etag || '',
+    expiresAt: typeof expiresAt === 'string' ? expiresAt : null,
     maxDownloads: Number.isInteger(maxDownloads) && maxDownloads > 0 ? maxDownloads : null,
     downloadCount: 0,
     lastDownloadedAt: ''
@@ -1549,9 +1990,690 @@ async function writeFileMeta(id, filename, declaredType, env, options = {}) {
   return readFileMeta(id, env);
 }
 
+async function ensureUploadNotificationTable(env) {
+  await env.DB.prepare(
+    `CREATE TABLE IF NOT EXISTS upload_notification_daily (
+      day_key TEXT PRIMARY KEY,
+      sent_count INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL
+    )`
+  ).run();
+}
+
+async function ensureAppSettingsTable(env) {
+  await env.DB.prepare(
+    `CREATE TABLE IF NOT EXISTS app_settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )`
+  ).run();
+}
+
+async function ensurePublishedFilesTable(env) {
+  await env.DB.prepare(
+    `CREATE TABLE IF NOT EXISTS published_files (
+      id TEXT PRIMARY KEY,
+      file_name TEXT NOT NULL,
+      content_type TEXT,
+      publish_origin TEXT NOT NULL,
+      view_url TEXT NOT NULL,
+      download_url TEXT NOT NULL,
+      play_url TEXT NOT NULL,
+      api_key_id TEXT,
+      user_id TEXT,
+      created_at TEXT NOT NULL
+    )`
+  ).run();
+}
+
+async function ensureSitesTables(env) {
+  await env.DB.batch([
+    env.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS sites (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        publish_origin TEXT NOT NULL,
+        site_url TEXT NOT NULL,
+        site_hostname TEXT NOT NULL DEFAULT '',
+        subdomain TEXT NOT NULL DEFAULT '',
+        entry_path TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'preparing',
+        file_count INTEGER NOT NULL DEFAULT 0,
+        total_size INTEGER NOT NULL DEFAULT 0,
+        expires_at TEXT,
+        api_key_id TEXT,
+        user_id TEXT,
+        created_at TEXT NOT NULL,
+        completed_at TEXT
+      )`
+    ),
+    env.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS site_files (
+        site_id TEXT NOT NULL,
+        relative_path TEXT NOT NULL,
+        file_id TEXT NOT NULL,
+        file_name TEXT NOT NULL,
+        content_type TEXT,
+        size INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (site_id, relative_path)
+      )`
+    )
+  ]);
+  for (const statement of [
+    'ALTER TABLE sites ADD COLUMN site_hostname TEXT NOT NULL DEFAULT ""',
+    'ALTER TABLE sites ADD COLUMN subdomain TEXT NOT NULL DEFAULT ""'
+  ]) {
+    try {
+      await env.DB.prepare(statement).run();
+    } catch {}
+  }
+  await env.DB.batch([
+    env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_sites_created_at ON sites(created_at)'),
+    env.DB.prepare('CREATE UNIQUE INDEX IF NOT EXISTS idx_sites_site_hostname ON sites(site_hostname)'),
+    env.DB.prepare('CREATE UNIQUE INDEX IF NOT EXISTS idx_sites_subdomain ON sites(subdomain)'),
+    env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_site_files_file_id ON site_files(file_id)')
+  ]);
+}
+
+function normalizePublishOrigin(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+  const candidate = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+  let parsed;
+  try {
+    parsed = new URL(candidate);
+  } catch {
+    return NaN;
+  }
+  if (!parsed.hostname) return NaN;
+  if (parsed.pathname !== '/' || parsed.search || parsed.hash) return NaN;
+  parsed.protocol = 'https:';
+  parsed.username = '';
+  parsed.password = '';
+  return parsed.origin;
+}
+
+function buildPublishedLinks(origin, id) {
+  return {
+    url: `${origin}/i/${id}`,
+    downloadUrl: `${origin}/d/${id}`,
+    playUrl: `${origin}/i/${id}?play=1`
+  };
+}
+
+async function getConfiguredPublishOrigin(env) {
+  await ensureAppSettingsTable(env);
+  const row = await env.DB.prepare(
+    'SELECT value FROM app_settings WHERE key = ?'
+  ).bind(PUBLISH_DOMAIN_SETTING_KEY).first();
+  const normalized = normalizePublishOrigin(row?.value);
+  return typeof normalized === 'string' ? normalized : null;
+}
+
+async function resolvePublishOrigin(request, env) {
+  const configured = await getConfiguredPublishOrigin(env);
+  if (configured) return configured;
+  const fallback = normalizePublishOrigin(new URL(request.url).origin);
+  return typeof fallback === 'string' ? fallback : new URL(request.url).origin;
+}
+
+async function recordPublishedFile(id, meta, links, session, env) {
+  await ensurePublishedFilesTable(env);
+  const now = new Date().toISOString();
+  await env.DB.prepare(
+    `INSERT INTO published_files (
+      id, file_name, content_type, publish_origin, view_url, download_url, play_url, api_key_id, user_id, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      file_name = excluded.file_name,
+      content_type = excluded.content_type,
+      publish_origin = excluded.publish_origin,
+      view_url = excluded.view_url,
+      download_url = excluded.download_url,
+      play_url = excluded.play_url,
+      api_key_id = excluded.api_key_id,
+      user_id = excluded.user_id,
+      created_at = excluded.created_at`
+  ).bind(
+    id,
+    meta?.name || id,
+    meta?.contentType || '',
+    normalizePublishOrigin(new URL(links.url).origin) || new URL(links.url).origin,
+    links.url,
+    links.downloadUrl,
+    links.playUrl,
+    session?.apiKeyId || null,
+    session?.userId || null,
+    now
+  ).run();
+}
+
+async function saveSiteMapping(site, files, env) {
+  await ensureSitesTables(env);
+  const now = new Date().toISOString();
+  const statements = [
+    env.DB.prepare(
+      `INSERT INTO sites (
+        id, name, publish_origin, site_url, site_hostname, subdomain, entry_path, status, file_count, total_size, expires_at,
+        api_key_id, user_id, created_at, completed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        name = excluded.name,
+        publish_origin = excluded.publish_origin,
+        site_url = excluded.site_url,
+        site_hostname = excluded.site_hostname,
+        subdomain = excluded.subdomain,
+        entry_path = excluded.entry_path,
+        status = excluded.status,
+        file_count = excluded.file_count,
+        total_size = excluded.total_size,
+        expires_at = excluded.expires_at,
+        api_key_id = excluded.api_key_id,
+        user_id = excluded.user_id,
+        created_at = excluded.created_at,
+        completed_at = excluded.completed_at`
+    ).bind(
+      site.id,
+      site.name,
+      site.publishOrigin,
+      site.siteUrl,
+      site.siteHostname,
+      site.subdomain,
+      site.entryPath,
+      files.length,
+      site.totalSize,
+      site.expiresAt,
+      site.apiKeyId,
+      site.userId,
+      site.createdAt,
+      now
+    ),
+    env.DB.prepare('DELETE FROM site_files WHERE site_id = ?').bind(site.id)
+  ];
+  for (const item of files) {
+    statements.push(
+      env.DB.prepare(
+        `INSERT INTO site_files (
+          site_id, relative_path, file_id, file_name, content_type, size, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+      ).bind(
+        site.id,
+        item.relativePath,
+        item.fileId,
+        item.fileName,
+        item.contentType,
+        item.size,
+        now
+      )
+    );
+  }
+  await env.DB.batch(statements);
+}
+
+async function getSiteById(siteId, env) {
+  await ensureSitesTables(env);
+  const item = await env.DB.prepare(
+    `SELECT id, name, publish_origin, site_url, site_hostname, subdomain, entry_path, status, file_count, total_size, expires_at,
+            api_key_id, user_id, created_at, completed_at
+     FROM sites WHERE id = ?`
+  ).bind(siteId).first();
+  if (!item) return null;
+  return {
+    id: item.id,
+    name: item.name,
+    publishOrigin: item.publish_origin,
+    siteUrl: item.site_url,
+    siteHostname: item.site_hostname || '',
+    subdomain: item.subdomain || '',
+    entryPath: item.entry_path,
+    status: item.status,
+    fileCount: Number(item.file_count || 0),
+    totalSize: Number(item.total_size || 0),
+    expiresAt: item.expires_at || null,
+    apiKeyId: item.api_key_id || null,
+    userId: item.user_id || null,
+    createdAt: item.created_at,
+    completedAt: item.completed_at || null
+  };
+}
+
+async function getSiteByHostname(hostname, env) {
+  await ensureSitesTables(env);
+  const item = await env.DB.prepare(
+    `SELECT id, name, publish_origin, site_url, site_hostname, subdomain, entry_path, status, file_count, total_size, expires_at,
+            api_key_id, user_id, created_at, completed_at
+     FROM sites WHERE site_hostname = ?`
+  ).bind(String(hostname || '').toLowerCase()).first();
+  if (!item) return null;
+  return {
+    id: item.id,
+    name: item.name,
+    publishOrigin: item.publish_origin,
+    siteUrl: item.site_url,
+    siteHostname: item.site_hostname || '',
+    subdomain: item.subdomain || '',
+    entryPath: item.entry_path,
+    status: item.status,
+    fileCount: Number(item.file_count || 0),
+    totalSize: Number(item.total_size || 0),
+    expiresAt: item.expires_at || null,
+    apiKeyId: item.api_key_id || null,
+    userId: item.user_id || null,
+    createdAt: item.created_at,
+    completedAt: item.completed_at || null
+  };
+}
+
+async function getSiteFileRecord(siteId, relativePath, env) {
+  await ensureSitesTables(env);
+  const item = await env.DB.prepare(
+    `SELECT site_id, relative_path, file_id, file_name, content_type, size, created_at
+     FROM site_files WHERE site_id = ? AND relative_path = ?`
+  ).bind(siteId, relativePath).first();
+  if (!item) return null;
+  return {
+    siteId: item.site_id,
+    relativePath: item.relative_path,
+    fileId: item.file_id,
+    fileName: item.file_name,
+    contentType: item.content_type || 'application/octet-stream',
+    size: Number(item.size || 0),
+    createdAt: item.created_at
+  };
+}
+
+async function listSiteDirectory(site, requestedPath, env) {
+  await ensureSitesTables(env);
+  const raw = String(requestedPath || '');
+  const normalizedRequest = decodeSitePath(raw.replace(/^\/+/, '').replace(/\/+$/, ''));
+  const normalizedDir = normalizeRelativePath(normalizedRequest);
+  const directoryPath = typeof normalizedDir === 'string' ? normalizedDir : '';
+  const prefix = directoryPath ? `${directoryPath}/` : '';
+  const result = await env.DB.prepare(
+    `SELECT site_id, relative_path, file_id, file_name, content_type, size, created_at
+     FROM site_files
+     WHERE site_id = ? AND relative_path LIKE ?
+     ORDER BY relative_path ASC`
+  ).bind(site.id, `${prefix}%`).all();
+  const rows = result.results || [];
+  const directories = new Map();
+  const directFiles = [];
+  for (const item of rows) {
+    const relativePath = String(item.relative_path || '');
+    const remainder = prefix ? relativePath.slice(prefix.length) : relativePath;
+    if (!remainder) continue;
+    const slashIndex = remainder.indexOf('/');
+    if (slashIndex >= 0) {
+      const dirName = remainder.slice(0, slashIndex);
+      if (!dirName) continue;
+      if (!directories.has(dirName)) {
+        const fullPath = prefix ? `${prefix}${dirName}` : dirName;
+        directories.set(dirName, {
+          kind: 'directory',
+          name: dirName,
+          relativePath: fullPath,
+          href: siteDirectoryHref(fullPath),
+          fileCount: 0,
+          totalSize: 0,
+          latestUpdatedAt: ''
+        });
+      }
+      const directory = directories.get(dirName);
+      directory.fileCount += 1;
+      directory.totalSize += Number(item.size || 0);
+      if (!directory.latestUpdatedAt || new Date(item.created_at || 0).getTime() > new Date(directory.latestUpdatedAt || 0).getTime()) {
+        directory.latestUpdatedAt = item.created_at || directory.latestUpdatedAt;
+      }
+      continue;
+    }
+    directFiles.push(item);
+  }
+  const files = await Promise.all(directFiles.map(async (item) => {
+    const meta = await readFileMeta(item.file_id, env);
+    const contentType = siteFileContentType(
+      item.relative_path,
+      item.content_type || meta?.contentType,
+      item.file_name || meta?.name || item.relative_path
+    );
+    return {
+      kind: 'file',
+      name: item.file_name || item.relative_path.split('/').pop() || item.relative_path,
+      relativePath: item.relative_path,
+      href: siteFileHref(item.relative_path),
+      downloadHref: siteFileHref(item.relative_path, { download: true }),
+      fileId: item.file_id,
+      contentType,
+      size: Number(meta?.size || item.size || 0),
+      uploadedAt: meta?.uploadedAt || item.created_at || '',
+      createdAt: item.created_at || ''
+    };
+  }));
+  const directoryItems = Array.from(directories.values()).sort((a, b) => siteListingNaturalCompare(a.name, b.name));
+  const fileItems = files.sort((a, b) => siteListingNaturalCompare(a.name, b.name));
+  if (!directoryItems.length && !fileItems.length) return null;
+  const visibleSize = directoryItems.reduce((sum, item) => sum + Number(item.totalSize || 0), 0) +
+    fileItems.reduce((sum, item) => sum + Number(item.size || 0), 0);
+  const summaryCandidates = [
+    ...directoryItems.map((item) => item.latestUpdatedAt || ''),
+    ...fileItems.map((item) => item.uploadedAt || item.createdAt || '')
+  ]
+    .map((value) => new Date(value || 0).getTime())
+    .filter((value) => Number.isFinite(value) && value > 0);
+  return {
+    directoryPath,
+    directories: directoryItems,
+    files: fileItems,
+    totalSize: visibleSize,
+    latestUpdatedAt: summaryCandidates.length ? new Date(Math.max(...summaryCandidates)).toISOString() : ''
+  };
+}
+
+function siteDirectoryListingHTML(site, listing) {
+  const pathParts = listing.directoryPath ? listing.directoryPath.split('/') : [];
+  const crumbs = [{ name: site.name || site.id || 'site', href: '/' }];
+  let current = '';
+  for (const part of pathParts) {
+    current = current ? `${current}/${part}` : part;
+    crumbs.push({
+      name: part,
+      href: siteDirectoryHref(current)
+    });
+  }
+  const parentPath = siteListingParentPath(listing.directoryPath);
+  const parentHref = listing.directoryPath ? siteDirectoryHref(parentPath) : '';
+  const rows = [
+    ...(listing.directoryPath ? [`
+      <tr class="parent-row" data-kind="directory" data-name=".." data-size="-1" data-time="0">
+        <td>
+          <a href="${parentHref}" class="name-link">
+            <span class="file-icon directory">UP</span>
+            <span class="name-stack">
+              <span class="name-main">..</span>
+              <span class="name-sub">返回上一级目录</span>
+            </span>
+          </a>
+        </td>
+        <td><span class="type-pill directory">上级目录</span></td>
+        <td>-</td>
+        <td>-</td>
+        <td><a class="btn" href="${parentHref}">返回上级</a></td>
+      </tr>
+    `] : []),
+    ...listing.directories.map((item) => `
+      <tr data-kind="directory" data-filter="directory" data-name="${escapeHtml(item.name)}" data-size="${Number(item.totalSize || 0)}" data-time="${new Date(item.latestUpdatedAt || 0).getTime() || 0}">
+        <td>
+          <a href="${item.href}" class="name-link">
+            <span class="file-icon directory">DIR</span>
+            <span class="name-stack">
+              <span class="name-main">${escapeHtml(item.name)}</span>
+              <span class="name-sub">${item.fileCount} 个条目 · ${escapeHtml(formatSize(Number(item.totalSize || 0)))}</span>
+            </span>
+          </a>
+        </td>
+        <td><span class="type-pill directory">目录</span></td>
+        <td>${escapeHtml(formatSize(Number(item.totalSize || 0)))}</td>
+        <td>${escapeHtml(formatSiteListingTime(item.latestUpdatedAt || ''))}</td>
+        <td><a class="btn" href="${item.href}">打开目录</a></td>
+      </tr>
+    `),
+    ...listing.files.map((item) => {
+      const actionHref = (isImage(item.contentType) || isVideo(item.contentType)) ? item.href : item.downloadHref;
+      const actionLabel = isImage(item.contentType) ? '查看' : (isVideo(item.contentType) ? '播放' : '下载');
+      const visual = siteListingVisual('file', item.contentType, item.name);
+      const filterCategory = siteListingFilterCategory('file', item.contentType, item.name);
+      const uploadedAt = item.uploadedAt || item.createdAt || '';
+      return `
+        <tr data-kind="file" data-filter="${filterCategory}" data-name="${escapeHtml(item.name)}" data-size="${Number(item.size || 0)}" data-time="${new Date(uploadedAt || 0).getTime() || 0}">
+          <td>
+            <a href="${actionHref}" class="name-link">
+              <span class="file-icon ${visual.className}">${visual.icon}</span>
+              <span class="name-stack">
+                <span class="name-main">${escapeHtml(item.name)}</span>
+                <span class="name-sub">${escapeHtml(item.contentType || 'application/octet-stream')}</span>
+              </span>
+            </a>
+          </td>
+          <td><span class="type-pill ${visual.className}">${visual.label}</span></td>
+          <td>${escapeHtml(formatSize(item.size))}</td>
+          <td>${escapeHtml(formatSiteListingTime(uploadedAt))}</td>
+          <td><a class="btn" href="${actionHref}">${actionLabel}</a></td>
+        </tr>
+      `;
+    })
+  ].join('');
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>${escapeHtml(site.name || site.id)} - 文件列表</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>*{box-sizing:border-box}body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#0b0d11;color:#e5e7eb;padding:24px}.wrap{max-width:1120px;margin:0 auto}.crumbs{display:flex;gap:8px;flex-wrap:wrap;font-size:13px;color:#9ca3af;margin:14px 0 18px}.crumb{display:inline-flex;align-items:center;gap:8px}.crumb a{color:#93c5fd;text-decoration:none}.crumb.current span:last-child{color:#e5e7eb;font-weight:600}.summary{display:flex;gap:14px;flex-wrap:wrap;color:#9ca3af;font-size:13px;margin-bottom:16px}.toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px}.toolbar-group{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.sorts,.filters{display:flex;gap:8px;flex-wrap:wrap}.sort-btn,.filter-btn{appearance:none;border:1px solid #374151;background:#0f172a;color:#cbd5e1;padding:8px 12px;border-radius:999px;font-size:12px;cursor:pointer;transition:.18s}.sort-btn:hover,.sort-btn.active,.filter-btn:hover,.filter-btn.active{border-color:#60a5fa;color:#fff;background:#111827}.toolbar-note{font-size:12px;color:#94a3b8}.panel{background:#111827;border:1px solid #1f2937;border-radius:14px;overflow:hidden}.title{padding:18px 20px;border-bottom:1px solid #1f2937}.title h1{font-size:22px;margin:0 0 6px}.title p{margin:0;color:#9ca3af;font-size:14px}.name-link{display:flex;align-items:center;gap:12px;color:#e5e7eb;text-decoration:none;min-width:0}.name-stack{display:flex;flex-direction:column;gap:4px;min-width:0}.name-main{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.name-sub{font-size:12px;color:#94a3b8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.file-icon{display:inline-flex;align-items:center;justify-content:center;min-width:44px;height:30px;padding:0 8px;border-radius:999px;font-size:11px;font-weight:700;letter-spacing:.04em;border:1px solid transparent}.file-icon.directory{background:rgba(59,130,246,.15);border-color:rgba(96,165,250,.25);color:#93c5fd}.file-icon.image{background:rgba(16,185,129,.14);border-color:rgba(52,211,153,.24);color:#6ee7b7}.file-icon.video{background:rgba(244,63,94,.14);border-color:rgba(251,113,133,.24);color:#fda4af}.file-icon.pdf{background:rgba(239,68,68,.14);border-color:rgba(248,113,113,.24);color:#fca5a5}.file-icon.code{background:rgba(168,85,247,.14);border-color:rgba(196,181,253,.24);color:#d8b4fe}.file-icon.text{background:rgba(250,204,21,.14);border-color:rgba(253,224,71,.24);color:#fde68a}.file-icon.audio{background:rgba(34,197,94,.14);border-color:rgba(134,239,172,.24);color:#bbf7d0}.file-icon.archive{background:rgba(249,115,22,.14);border-color:rgba(251,146,60,.24);color:#fdba74}.file-icon.file{background:rgba(148,163,184,.15);border-color:rgba(203,213,225,.2);color:#cbd5e1}.type-pill{display:inline-flex;align-items:center;justify-content:center;padding:6px 10px;border-radius:999px;font-size:12px;border:1px solid transparent}.type-pill.directory{background:rgba(59,130,246,.12);border-color:rgba(96,165,250,.22);color:#93c5fd}.type-pill.image{background:rgba(16,185,129,.12);border-color:rgba(52,211,153,.22);color:#6ee7b7}.type-pill.video{background:rgba(244,63,94,.12);border-color:rgba(251,113,133,.22);color:#fda4af}.type-pill.pdf{background:rgba(239,68,68,.12);border-color:rgba(248,113,113,.22);color:#fca5a5}.type-pill.code{background:rgba(168,85,247,.12);border-color:rgba(196,181,253,.22);color:#d8b4fe}.type-pill.text{background:rgba(250,204,21,.12);border-color:rgba(253,224,71,.22);color:#fde68a}.type-pill.audio{background:rgba(34,197,94,.12);border-color:rgba(134,239,172,.22);color:#bbf7d0}.type-pill.archive{background:rgba(249,115,22,.12);border-color:rgba(251,146,60,.22);color:#fdba74}.type-pill.file{background:rgba(148,163,184,.12);border-color:rgba(203,213,225,.18);color:#cbd5e1}table{width:100%;border-collapse:collapse}th,td{padding:14px 16px;border-bottom:1px solid #1f2937;text-align:left;font-size:14px;vertical-align:middle}th{color:#9ca3af;font-weight:500;background:#0f172a}.parent-row td{background:rgba(15,23,42,.45)}tr:last-child td{border-bottom:none}tr[hidden]{display:none !important}a{color:#e5e7eb;text-decoration:none}.btn{display:inline-block;padding:7px 12px;border:1px solid #374151;border-radius:8px;color:#cbd5e1}.btn:hover{border-color:#60a5fa;color:#fff}.empty{padding:32px 20px;color:#9ca3af}@media (max-width:860px){body{padding:16px}th:nth-child(2),td:nth-child(2){display:none}}@media (max-width:620px){th:nth-child(4),td:nth-child(4){display:none}.file-icon{min-width:38px;height:28px;font-size:10px}}</style></head>
+<body><div class="wrap"><div class="title"><h1>站点文件列表</h1><p>${escapeHtml(site.name || site.id || 'site')}</p></div>
+<div class="crumbs">${crumbs.map((item, index) => {
+    const isCurrent = index === crumbs.length - 1;
+    return `<span class="crumb${isCurrent ? ' current' : ''}">${index ? '<span>/</span>' : ''}${isCurrent ? `<span>${escapeHtml(item.name)}</span>` : `<a href="${item.href}">${escapeHtml(item.name)}</a>`}</span>`;
+  }).join('')}</div>
+<div class="summary"><span>目录：${listing.directories.length}</span><span>文件：${listing.files.length}</span><span>当前目录总大小：${escapeHtml(formatSize(Number(listing.totalSize || 0)))}</span><span>最近更新：${escapeHtml(formatSiteListingTime(listing.latestUpdatedAt || ''))}</span><span>站点：${escapeHtml(site.siteHostname || '')}</span></div>
+<div class="toolbar">
+  <div class="toolbar-group">
+    <div class="sorts">
+      <button class="sort-btn active" type="button" data-sort="name">按名称</button>
+      <button class="sort-btn" type="button" data-sort="time">按时间</button>
+      <button class="sort-btn" type="button" data-sort="size">按大小</button>
+    </div>
+    <div class="filters">
+      <button class="filter-btn active" type="button" data-filter="all">全部</button>
+      <button class="filter-btn" type="button" data-filter="directory">目录</button>
+      <button class="filter-btn" type="button" data-filter="image">图片</button>
+      <button class="filter-btn" type="button" data-filter="video">视频</button>
+      <button class="filter-btn" type="button" data-filter="document">文档</button>
+      <button class="filter-btn" type="button" data-filter="text">文本</button>
+      <button class="filter-btn" type="button" data-filter="other">其它</button>
+    </div>
+  </div>
+  <div class="toolbar-note">${listing.directoryPath ? `<a class="btn" href="${parentHref}">返回上级</a>` : '目录优先显示，可按名称、时间或大小排序文件'}</div>
+</div>
+<div class="panel">${rows ? `<table><thead><tr><th>文件名</th><th>类型</th><th>大小</th><th>上传时间</th><th>操作</th></tr></thead><tbody id="siteListingBody">${rows}</tbody></table>` : '<div class="empty">当前目录为空。</div>'}</div>
+</div>
+<script>
+(function () {
+  var body = document.getElementById('siteListingBody');
+  if (!body) return;
+  var sortStorageKey = 'okfile_site_listing_sort';
+  var buttons = Array.prototype.slice.call(document.querySelectorAll('.sort-btn'));
+  var filterButtons = Array.prototype.slice.call(document.querySelectorAll('.filter-btn'));
+  var currentSort = 'name';
+  var currentFilter = 'all';
+  function compareByName(a, b) {
+    return String(a.dataset.name || '').localeCompare(String(b.dataset.name || ''), 'zh-CN', { numeric: true, sensitivity: 'base' });
+  }
+  function isSticky(row) {
+    return row.classList.contains('parent-row');
+  }
+  function kindRank(row) {
+    if (isSticky(row)) return -1;
+    return row.dataset.kind === 'directory' ? 0 : 1;
+  }
+  function sortRows(mode) {
+    var rows = Array.prototype.slice.call(body.querySelectorAll('tr'));
+    rows.sort(function (a, b) {
+      var rank = kindRank(a) - kindRank(b);
+      if (rank !== 0) return rank;
+      if (mode === 'size' && a.dataset.kind === 'file' && b.dataset.kind === 'file') {
+        var sizeDiff = Number(b.dataset.size || 0) - Number(a.dataset.size || 0);
+        if (sizeDiff !== 0) return sizeDiff;
+      }
+      if (mode === 'time' && a.dataset.kind === 'file' && b.dataset.kind === 'file') {
+        var timeDiff = Number(b.dataset.time || 0) - Number(a.dataset.time || 0);
+        if (timeDiff !== 0) return timeDiff;
+      }
+      return compareByName(a, b);
+    });
+    rows.forEach(function (row) { body.appendChild(row); });
+    buttons.forEach(function (button) {
+      button.classList.toggle('active', button.getAttribute('data-sort') === mode);
+    });
+    currentSort = mode;
+    try { localStorage.setItem(sortStorageKey, mode); } catch (_) {}
+  }
+  function applyFilter(mode) {
+    var rows = Array.prototype.slice.call(body.querySelectorAll('tr'));
+    rows.forEach(function (row) {
+      if (isSticky(row)) {
+        row.hidden = false;
+        return;
+      }
+      if (mode === 'all') {
+        row.hidden = false;
+        return;
+      }
+      row.hidden = (row.getAttribute('data-filter') || '') !== mode;
+    });
+    filterButtons.forEach(function (button) {
+      button.classList.toggle('active', button.getAttribute('data-filter') === mode);
+    });
+    currentFilter = mode;
+  }
+  buttons.forEach(function (button) {
+    button.addEventListener('click', function () {
+      sortRows(button.getAttribute('data-sort') || 'name');
+    });
+  });
+  filterButtons.forEach(function (button) {
+    button.addEventListener('click', function () {
+      applyFilter(button.getAttribute('data-filter') || 'all');
+    });
+  });
+  try {
+    var savedSort = localStorage.getItem(sortStorageKey);
+    if (savedSort === 'name' || savedSort === 'time' || savedSort === 'size') {
+      currentSort = savedSort;
+    }
+  } catch (_) {}
+  sortRows(currentSort);
+  applyFilter(currentFilter);
+})();
+</script></body></html>`;
+}
+
+async function reserveUploadNotificationSlot(env) {
+  await ensureUploadNotificationTable(env);
+  const dayKey = new Date().toISOString().slice(0, 10);
+  const now = new Date().toISOString();
+  await env.DB.prepare(
+    'INSERT OR IGNORE INTO upload_notification_daily (day_key, sent_count, updated_at) VALUES (?, 0, ?)'
+  ).bind(dayKey, now).run();
+  const result = await env.DB.prepare(
+    `UPDATE upload_notification_daily
+     SET sent_count = sent_count + 1, updated_at = ?
+     WHERE day_key = ? AND sent_count < ?`
+  ).bind(now, dayKey, UPLOAD_NOTIFY_DAILY_LIMIT).run();
+  return Boolean(result?.meta?.changes);
+}
+
+async function releaseUploadNotificationSlot(env) {
+  await ensureUploadNotificationTable(env);
+  await env.DB.prepare(
+    `UPDATE upload_notification_daily
+     SET sent_count = CASE WHEN sent_count > 0 THEN sent_count - 1 ELSE 0 END,
+         updated_at = ?
+     WHERE day_key = ?`
+  ).bind(new Date().toISOString(), new Date().toISOString().slice(0, 10)).run();
+}
+
+async function sendUploadNotification(meta, request, env, links = null) {
+  if (!env.RESEND_API_KEY || !env.RESEND_FROM_EMAIL) return { sent: false, skipped: true, reason: 'email_not_configured' };
+  const reserved = await reserveUploadNotificationSlot(env);
+  if (!reserved) return { sent: false, skipped: true, reason: 'daily_limit_reached' };
+  const publishLinks = links || buildPublishedLinks(await resolvePublishOrigin(request, env), meta.id);
+  const viewUrl = publishLinks.url;
+  const downloadUrl = publishLinks.downloadUrl;
+  const playUrl = publishLinks.playUrl;
+  const html = `<div style="font-family:Arial,sans-serif;line-height:1.7;color:#111">
+    <h2>收到新文件</h2>
+    <ul>
+      <li>文件名：${escapeHtml(meta.name || meta.id)}</li>
+      <li>文件 ID：${escapeHtml(meta.id)}</li>
+      <li>大小：${escapeHtml(formatSize(meta.size))}</li>
+      <li>类型：${escapeHtml(meta.contentType || 'application/octet-stream')}</li>
+      <li>上传时间：${escapeHtml(meta.uploadedAt || new Date().toISOString())}</li>
+      ${meta.expiresAt ? `<li>过期时间：${escapeHtml(meta.expiresAt)}</li>` : ''}
+    </ul>
+    <p>相关链接：</p>
+    <ul>
+      <li>预览页：<a href="${viewUrl}">${viewUrl}</a></li>
+      <li>下载页：<a href="${downloadUrl}">${downloadUrl}</a></li>
+      <li>播放页：<a href="${playUrl}">${playUrl}</a></li>
+    </ul>
+  </div>`;
+  try {
+    const resendRes = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${env.RESEND_API_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        from: env.RESEND_FROM_EMAIL,
+        to: [UPLOAD_NOTIFY_TO_EMAIL],
+        subject: `${UPLOAD_NOTIFY_SUBJECT_PREFIX}: ${meta.name || meta.id}`,
+        html
+      })
+    });
+    if (!resendRes.ok) {
+      const errorText = await resendRes.text();
+      throw new Error(`发送上传通知失败: ${errorText}`);
+    }
+    return { sent: true };
+  } catch (error) {
+    await releaseUploadNotificationSlot(env);
+    throw error;
+  }
+}
+
+function parseMetaIdFromKey(key) {
+  const match = new RegExp(`^${META_PREFIX.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([a-zA-Z0-9]+)\\.json$`).exec(String(key || ''));
+  return match ? match[1] : null;
+}
+
+async function deleteFileAndMeta(id, env) {
+  await env.FILES.delete(id);
+  await env.FILES.delete(metaKey(id));
+}
+
+async function cleanupExpiredFiles(env, options = {}) {
+  const limit = Math.max(1, Math.min(Number(options.limit || 100), 1000));
+  const listed = await env.FILES.list({ prefix: META_PREFIX, limit });
+  const now = Date.now();
+  let checked = 0;
+  let deleted = 0;
+  const deletedIds = [];
+  for (const object of listed.objects || []) {
+    checked += 1;
+    const id = parseMetaIdFromKey(object.key);
+    if (!id) continue;
+    const sidecar = await readSidecarMeta(id, env);
+    const expiresAt = normalizeExpiresAt(sidecar?.expiresAt);
+    if (typeof expiresAt !== 'string') continue;
+    if (new Date(expiresAt).getTime() > now) continue;
+    await deleteFileAndMeta(id, env);
+    deleted += 1;
+    deletedIds.push(id);
+  }
+  return {
+    success: true,
+    checked,
+    deleted,
+    deletedIds,
+    truncated: Boolean(listed.truncated),
+    cursor: listed.cursor || null
+  };
+}
+
 async function recordDownloadAndGetMeta(id, env) {
   const currentMeta = await readFileMeta(id, env);
   if (!currentMeta) return { success: false, status: 404 };
+  if (isMetaExpired(currentMeta)) {
+    return { success: false, status: 410, meta: currentMeta };
+  }
   if (!currentMeta.downloadLimitEnabled) {
     return { success: true, meta: currentMeta };
   }
@@ -1607,7 +2729,7 @@ async function handleVerify(request, env) {
   const result = await consumeMagicLink(token, env);
   if (result.error) return htmlResponse(`<h1>${escapeHtml(result.error)}</h1>`, 400);
   const sessionToken = await createSession(result.userId, env);
-  return redirect('/account', { 'Set-Cookie': buildSessionCookie(sessionToken) });
+  return redirect('/account', { 'Set-Cookie': buildSessionCookie(sessionToken, request) });
 }
 
 async function handleAccountMe(request, env) {
@@ -1636,7 +2758,7 @@ async function handleCreateApiKey(request, env) {
 
 async function handleLogout(request, env) {
   await logoutSession(request, env);
-  return json({ success: true }, 200, { 'Set-Cookie': clearSessionCookie() });
+  return json({ success: true }, 200, { 'Set-Cookie': clearSessionCookie(request) });
 }
 
 async function handleAdminApiKeys(request, env) {
@@ -1703,6 +2825,33 @@ async function handleAdminUpdateApiKey(request, keyId, env) {
   return json({ success: true });
 }
 
+async function handleAdminCleanupExpired(request, env) {
+  const session = await getSessionFromRequest(request, env);
+  if (!session) return json({ error: '请先登录' }, 401);
+  if (!session.isAdmin) return json({ error: '没有管理员权限' }, 403);
+  let body = {};
+  try {
+    if (request.headers.get('content-type')?.includes('application/json')) {
+      body = await request.json();
+    }
+  } catch {}
+  const result = await cleanupExpiredFiles(env, {
+    limit: body?.limit || EXPIRED_CLEANUP_BATCH_LIMIT
+  });
+  return json(result);
+}
+
+async function runScheduledCleanup(env) {
+  if (!env?.FILES) {
+    return { success: false, skipped: true, reason: 'files_binding_missing' };
+  }
+  const result = await cleanupExpiredFiles(env, {
+    limit: EXPIRED_CLEANUP_BATCH_LIMIT
+  });
+  console.log(`[cleanupExpiredFiles] checked=${result.checked} deleted=${result.deleted} truncated=${result.truncated}`);
+  return result;
+}
+
 async function handleUploadConfig(env) {
   return json({
     success: true,
@@ -1712,7 +2861,144 @@ async function handleUploadConfig(env) {
     multipartThresholdMb: Math.round(MULTIPART_THRESHOLD / 1024 / 1024),
     partSize: PART_SIZE,
     partSizeMb: Math.round(PART_SIZE / 1024 / 1024),
-    presignedExpires: PRESIGNED_EXPIRES
+    presignedExpires: PRESIGNED_EXPIRES,
+    siteUpload: {
+      supported: true,
+      maxFiles: SITE_MAX_FILES,
+      maxTotalSize: SITE_MAX_TOTAL_SIZE,
+      maxTotalSizeMb: Math.round(SITE_MAX_TOTAL_SIZE / 1024 / 1024),
+      entryDefault: SITE_DEFAULT_ENTRY
+    }
+  });
+}
+
+async function handleSitePrepare(request, env) {
+  let body;
+  try {
+    body = await request.json();
+  } catch (error) {
+    return json({ error: `请求体必须是 JSON: ${error.message}` }, 400);
+  }
+
+  const rawApiKey = getRequestApiKey(request, body);
+  let apiKey = null;
+  if (rawApiKey) {
+    apiKey = await getApiKeyByRaw(rawApiKey, env);
+    if (!apiKey) return json({ error: 'API Key 无效' }, 401);
+  } else {
+    const ip = getClientIp(request);
+    const prepareLimit = takeRateLimit(prepareRateBuckets, `site-prepare:${ip}`, Math.max(10, Math.floor(PREPARE_RATE_LIMIT / 4)), PREPARE_RATE_WINDOW_MS);
+    if (!prepareLimit.success) {
+      return json({ error: `站点准备请求过多，请 ${(prepareLimit.resetInMs / 1000).toFixed(0)} 秒后再试` }, 429);
+    }
+  }
+
+  const expiresAt = normalizeExpiresAt(body?.expiresAt);
+  if (Number.isNaN(expiresAt)) {
+    return json({ error: 'expiresAt 必须是有效的 ISO 8601 时间字符串' }, 400);
+  }
+  if (typeof expiresAt === 'string' && isExpiredAt(expiresAt)) {
+    return json({ error: 'expiresAt 已经过期，请传入未来时间' }, 400);
+  }
+
+  const inputFiles = Array.isArray(body?.files) ? body.files : [];
+  if (!inputFiles.length) return json({ error: '站点清单不能为空' }, 400);
+  if (inputFiles.length > SITE_MAX_FILES) {
+    return json({ error: `站点文件数过多，当前阶段最多支持 ${SITE_MAX_FILES} 个文件` }, 400);
+  }
+
+  let totalSize = 0;
+  const stagedFiles = [];
+  const rawPaths = [];
+  for (const item of inputFiles) {
+    const relativePath = normalizeRelativePath(item?.path);
+    if (typeof relativePath !== 'string') {
+      return json({ error: `存在非法路径：${String(item?.path || '')}` }, 400);
+    }
+    const size = Number(item?.size || 0);
+    if (!Number.isFinite(size) || size < 1) {
+      return json({ error: `文件大小无效：${relativePath}` }, 400);
+    }
+    if (size > MAX_SIZE) {
+      return json({ error: `文件过大：${relativePath}，单文件最大支持 ${(MAX_SIZE / 1024 / 1024).toFixed(0)}MB` }, 400);
+    }
+    totalSize += size;
+    rawPaths.push(relativePath);
+    stagedFiles.push({
+      relativePath,
+      size,
+      contentType: contentTypeFromName(relativePath, item?.contentType)
+    });
+  }
+
+  if (totalSize > SITE_MAX_TOTAL_SIZE) {
+    return json({ error: `站点总大小过大，当前阶段最大支持 ${(SITE_MAX_TOTAL_SIZE / 1024 / 1024).toFixed(0)}MB` }, 400);
+  }
+
+  const canonical = stripCommonTopLevelDir(rawPaths);
+  const manifest = stagedFiles.map((item, index) => ({
+    ...item,
+    relativePath: canonical.paths[index] || item.relativePath
+  }));
+  const seenPaths = new Set();
+  for (const item of manifest) {
+    if (seenPaths.has(item.relativePath)) {
+      return json({ error: `目录中存在重复路径：${item.relativePath}` }, 400);
+    }
+    seenPaths.add(item.relativePath);
+  }
+
+  const entryPath = (() => {
+    const normalized = normalizeRelativePath(body?.entryPath);
+    if (typeof normalized === 'string') {
+      if (canonical.sharedRoot && normalized.startsWith(`${canonical.sharedRoot}/`)) {
+        return normalized.slice(canonical.sharedRoot.length + 1);
+      }
+      return normalized;
+    }
+    return chooseSiteEntryPath(manifest.map((item) => item.relativePath));
+  })();
+  if (entryPath && !seenPaths.has(entryPath)) {
+    return json({ error: `入口文件不存在：${entryPath}` }, 400);
+  }
+
+  const siteId = `st_${generateId(10)}`;
+  const siteToken = randomToken(24);
+  const publishOrigin = await resolvePublishOrigin(request, env);
+  const subdomain = siteSubdomainForId(siteId);
+  const siteLinks = buildPublishedSiteLinks(publishOrigin, subdomain, entryPath);
+  const siteName = sanitizeSiteName(body?.siteName || canonical.sharedRoot || entryPath.split('/')[0] || siteId);
+  const createdAt = new Date().toISOString();
+  await saveSiteSession(siteId, {
+    id: siteId,
+    siteToken,
+    subdomain,
+    siteName,
+    entryPath,
+    manifest,
+    fileCount: manifest.length,
+    totalSize,
+    expiresAt: typeof expiresAt === 'string' ? expiresAt : null,
+    apiKeyId: apiKey?.id || null,
+    userId: apiKey?.userId || null,
+    createdAt
+  }, env);
+
+  return json({
+    success: true,
+    siteId,
+    siteToken,
+    subdomain,
+    siteHostname: siteLinks.siteHostname,
+    siteName,
+    entryPath,
+    pathRoot: canonical.sharedRoot || '',
+    fileCount: manifest.length,
+    totalSize,
+    expiresAt: typeof expiresAt === 'string' ? expiresAt : null,
+    siteUrl: siteLinks.siteUrl,
+    entryUrl: siteLinks.entryUrl,
+    uploadStrategy: 'reuse-file-upload-api'
   });
 }
 
@@ -1743,8 +3029,15 @@ async function handleUploadPrepare(request, env) {
   const size = Number(body?.size || 0);
   const preferredPartSize = Number(body?.preferredPartSize || 0);
   const maxDownloads = normalizeMaxDownloads(body?.maxDownloads);
+  const expiresAt = normalizeExpiresAt(body?.expiresAt);
   if (Number.isNaN(maxDownloads)) {
     return json({ error: 'maxDownloads 必须是大于 0 的整数' }, 400);
+  }
+  if (Number.isNaN(expiresAt)) {
+    return json({ error: 'expiresAt 必须是有效的 ISO 8601 时间字符串' }, 400);
+  }
+  if (typeof expiresAt === 'string' && isExpiredAt(expiresAt)) {
+    return json({ error: 'expiresAt 已经过期，请传入未来时间' }, 400);
   }
   let actualPartSize = PART_SIZE;
   if (preferredPartSize >= 5 * 1024 * 1024 && preferredPartSize <= 100 * 1024 * 1024) {
@@ -1756,7 +3049,8 @@ async function handleUploadPrepare(request, env) {
   if (size > MAX_SIZE) return json({ error: `文件过大，最大支持 ${(MAX_SIZE / 1024 / 1024).toFixed(0)}MB` }, 400);
 
   const id = generateId();
-  const origin = new URL(request.url).origin;
+  const publishOrigin = await resolvePublishOrigin(request, env);
+  const publishLinks = buildPublishedLinks(publishOrigin, id);
   const baseSession = {
     id,
     apiKeyId: apiKey?.id || null,
@@ -1765,18 +3059,28 @@ async function handleUploadPrepare(request, env) {
     size,
     contentType: detectedType,
     createdAt: new Date().toISOString(),
-    maxDownloads
+    maxDownloads,
+    expiresAt: typeof expiresAt === 'string' ? expiresAt : null
   };
   const responseBase = {
     success: true,
     id,
     expiresIn: PRESIGNED_EXPIRES,
-    url: `${origin}/i/${id}`,
-    downloadUrl: `${origin}/d/${id}`,
-    playUrl: `${origin}/i/${id}?play=1`,
+    url: publishLinks.url,
+    downloadUrl: publishLinks.downloadUrl,
+    playUrl: publishLinks.playUrl,
     type: classifyContent(detectedType),
     maxDownloads,
-    limits: buildPrepareLimits(apiKey, actualPartSize, maxDownloads)
+    expiresAt: typeof expiresAt === 'string' ? expiresAt : null,
+    limits: buildPrepareLimits(apiKey, actualPartSize, maxDownloads),
+    integrity: {
+      etag: {
+        supported: true,
+        completeField: 'etag',
+        multipartField: 'parts[].etag',
+        optional: true
+      }
+    }
   };
 
   if (size > MULTIPART_THRESHOLD) {
@@ -1845,6 +3149,10 @@ async function handleUploadComplete(request, env) {
   const filename = sanitizeFilename(session.name || id);
   const expectedSize = Number(session.size || 0);
   const declaredType = contentTypeFromName(filename, session.contentType);
+  const reportedObjectEtag = normalizeETag(body?.etag);
+  const reportedPartEtags = normalizeClientUploadedParts(body?.parts);
+  let partEtagValidated = false;
+  let objectEtagValidated = false;
 
   if (session?.mode === 'multipart') {
     try {
@@ -1859,6 +3167,11 @@ async function handleUploadComplete(request, env) {
           missingParts: validation.missingParts
         }, validation.status);
       }
+      const etagValidation = validateReportedPartEtags(reportedPartEtags, uploadedParts, Number(session.totalParts || 0));
+      if (!etagValidation.ok) {
+        return json({ success: false, error: etagValidation.error }, etagValidation.status);
+      }
+      partEtagValidated = Boolean(etagValidation.validated);
       const multipart = env.FILES.resumeMultipartUpload(id, session.uploadId);
       await multipart.complete(uploadedParts);
     } catch (error) {
@@ -1871,12 +3184,26 @@ async function handleUploadComplete(request, env) {
   if (expectedSize > 0 && head.size !== expectedSize) {
     return json({ error: `文件大小不匹配，期望 ${expectedSize} 字节，实际 ${head.size} 字节` }, 409);
   }
+  const objectEtagCheck = validateReportedObjectETag(reportedObjectEtag, head.httpEtag || head.etag || '');
+  if (!objectEtagCheck.ok) {
+    return json({ success: false, error: objectEtagCheck.error }, objectEtagCheck.status);
+  }
+  objectEtagValidated = Boolean(objectEtagCheck.validated);
 
   const meta = await writeFileMeta(id, filename, declaredType, env, {
-    maxDownloads: session.maxDownloads
+    maxDownloads: session.maxDownloads,
+    expiresAt: session.expiresAt
   });
   if (session?.apiKeyId) {
     await incrementApiKeyUploadCount(session.apiKeyId, env);
+  }
+  const publishOrigin = await resolvePublishOrigin(request, env);
+  const publishLinks = buildPublishedLinks(publishOrigin, id);
+  await recordPublishedFile(id, meta, publishLinks, session, env);
+  try {
+    await sendUploadNotification(meta, request, env, publishLinks);
+  } catch (error) {
+    console.error(error.message || error);
   }
   if (session) {
     await deleteUploadSession(id, env);
@@ -1885,10 +3212,18 @@ async function handleUploadComplete(request, env) {
   return json({
     success: true,
     id,
-    url: `${new URL(request.url).origin}/i/${id}`,
-    downloadUrl: `${new URL(request.url).origin}/d/${id}`,
-    playUrl: `${new URL(request.url).origin}/i/${id}?play=1`,
+    url: publishLinks.url,
+    downloadUrl: publishLinks.downloadUrl,
+    playUrl: publishLinks.playUrl,
     type: classifyContent(meta?.contentType || declaredType),
+    etag: meta?.etag || normalizeETag(head.httpEtag || head.etag || ''),
+    integrity: {
+      etag: meta?.etag || normalizeETag(head.httpEtag || head.etag || ''),
+      validated: partEtagValidated || objectEtagValidated,
+      objectEtagValidated,
+      partEtagValidated
+    },
+    expiresAt: meta?.expiresAt ?? null,
     maxDownloads: meta?.maxDownloads ?? null,
     downloadCount: meta?.downloadCount ?? 0,
     remainingDownloads: meta?.remainingDownloads ?? null
@@ -1929,9 +3264,165 @@ async function handleUploadStatus(request, id, env) {
   }
 }
 
+async function handleSiteComplete(request, env) {
+  let body;
+  try {
+    body = await request.json();
+  } catch (error) {
+    return json({ error: `请求体必须是 JSON: ${error.message}` }, 400);
+  }
+
+  const siteId = String(body?.siteId || '').trim();
+  if (!/^st_[a-z0-9]+$/i.test(siteId)) return json({ error: '无效的站点 ID' }, 400);
+  const siteToken = String(body?.siteToken || '').trim();
+  if (!siteToken) return json({ error: '缺少站点完成令牌' }, 400);
+
+  const session = await readSiteSession(siteId, env);
+  if (!session) return json({ error: '站点上载会话不存在或已过期，请重新准备' }, 404);
+  if (siteToken !== session.siteToken) return json({ error: '站点完成令牌无效' }, 403);
+
+  const inputFiles = Array.isArray(body?.files) ? body.files : [];
+  if (!inputFiles.length) return json({ error: '站点文件清单不能为空' }, 400);
+  if (inputFiles.length !== Number(session.fileCount || 0)) {
+    return json({ error: '站点文件数量与 prepare 阶段不一致' }, 409);
+  }
+
+  const canonical = stripCommonTopLevelDir(inputFiles.map((item) => item?.relativePath));
+  const expected = new Map((session.manifest || []).map((item) => [item.relativePath, item]));
+  const mappedFiles = [];
+  for (let index = 0; index < inputFiles.length; index += 1) {
+    const item = inputFiles[index];
+    const relativePath = canonical.paths[index] || normalizeRelativePath(item?.relativePath);
+    const fileId = String(item?.fileId || '').trim();
+    if (typeof relativePath !== 'string') {
+      return json({ error: '存在非法 relativePath' }, 400);
+    }
+    if (!/^[a-z0-9]+$/i.test(fileId)) {
+      return json({ error: `存在非法文件 ID：${fileId}` }, 400);
+    }
+    const expectedItem = expected.get(relativePath);
+    if (!expectedItem) {
+      return json({ error: `文件不在 prepare 清单中：${relativePath}` }, 409);
+    }
+    const meta = await readFileMeta(fileId, env);
+    if (!meta) {
+      return json({ error: `文件尚未完成上传：${relativePath}` }, 409);
+    }
+    mappedFiles.push({
+      relativePath,
+      fileId,
+      fileName: meta.name || relativePath.split('/').pop() || fileId,
+      contentType: siteFileContentType(
+        relativePath,
+        meta.contentType || expectedItem.contentType || 'application/octet-stream',
+        meta.name || relativePath
+      ),
+      size: Number(meta.size || expectedItem.size || 0)
+    });
+    expected.delete(relativePath);
+  }
+
+  if (expected.size > 0) {
+    return json({
+      error: '仍有文件未完成站点发布',
+      missingPaths: Array.from(expected.keys())
+    }, 409);
+  }
+
+  const publishOrigin = await resolvePublishOrigin(request, env);
+  const siteEntryPath = typeof session.entryPath === 'string' ? session.entryPath : SITE_DEFAULT_ENTRY;
+  const siteLinks = buildPublishedSiteLinks(
+    publishOrigin,
+    session.subdomain || siteSubdomainForId(siteId),
+    siteEntryPath
+  );
+  await saveSiteMapping({
+    id: siteId,
+    name: sanitizeSiteName(session.siteName),
+    publishOrigin,
+    siteUrl: siteLinks.siteUrl,
+    siteHostname: siteLinks.siteHostname,
+    subdomain: session.subdomain || siteLinks.siteSubdomain,
+    entryPath: siteEntryPath,
+    totalSize: Number(session.totalSize || 0),
+    expiresAt: session.expiresAt || null,
+    apiKeyId: session.apiKeyId || null,
+    userId: session.userId || null,
+    createdAt: session.createdAt || new Date().toISOString()
+  }, mappedFiles, env);
+  await deleteSiteSession(siteId, env);
+
+  return json({
+    success: true,
+    siteId,
+    subdomain: session.subdomain || siteLinks.siteSubdomain,
+    siteHostname: siteLinks.siteHostname,
+    siteName: sanitizeSiteName(session.siteName),
+    siteUrl: siteLinks.siteUrl,
+    entryUrl: siteLinks.entryUrl,
+    entryPath: siteEntryPath,
+    publishOrigin,
+    fileCount: mappedFiles.length,
+    totalSize: Number(session.totalSize || 0),
+    expiresAt: session.expiresAt || null
+  });
+}
+
+function siteNotFoundHTML(siteId, requestedPath = '') {
+  const suffix = requestedPath ? ` / ${escapeHtml(requestedPath)}` : '';
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>站点不存在 - OkFile</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#0a0a0a;color:#fff;display:flex;align-items:center;justify-content:center;min-height:100vh}.wrap{text-align:center;padding:24px;max-width:640px}.icon{font-size:64px;margin-bottom:20px}h1{font-size:24px;font-weight:600;margin-bottom:12px;color:#ef4444}p{color:#9ca3af;font-size:14px;line-height:1.8;margin-bottom:16px}a{color:#60a5fa;text-decoration:none;border:1px solid #333;padding:8px 20px;border-radius:8px;display:inline-block}a:hover{border-color:#60a5fa}</style></head>
+<body><div class="wrap"><div class="icon">📂</div><h1>站点文件不存在</h1><p>未找到站点 <code>${escapeHtml(siteId)}</code>${suffix}。</p><a href="/">返回 OkFile 首页</a></div></body></html>`;
+}
+
+function expiredSiteHTML(site) {
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>站点已过期 - OkFile</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#0a0a0a;color:#fff;display:flex;align-items:center;justify-content:center;min-height:100vh}.wrap{text-align:center;padding:24px;max-width:640px}.icon{font-size:64px;margin-bottom:20px}h1{font-size:24px;font-weight:600;margin-bottom:12px;color:#f59e0b}p{color:#9ca3af;font-size:14px;line-height:1.8;margin-bottom:16px}a{color:#60a5fa;text-decoration:none;border:1px solid #333;padding:8px 20px;border-radius:8px;display:inline-block}a:hover{border-color:#60a5fa}</style></head>
+<body><div class="wrap"><div class="icon">⏳</div><h1>站点已过期</h1><p>站点 <code>${escapeHtml(site?.name || site?.id || 'unknown')}</code> 已超过可访问期限。</p>${site?.expiresAt ? `<p>过期时间：<code>${escapeHtml(site.expiresAt)}</code></p>` : ''}<a href="/">返回 OkFile 首页</a></div></body></html>`;
+}
+
+async function sitePage(site, requestedPath, request, env) {
+  if (!site) {
+    return htmlResponse(siteNotFoundHTML('unknown', requestedPath), 404, { 'Cache-Control': 'no-store' });
+  }
+  if (isExpiredAt(site.expiresAt)) {
+    return htmlResponse(expiredSiteHTML(site), 410, { 'Cache-Control': 'no-store' });
+  }
+  const entryPath = typeof site.entryPath === 'string' ? site.entryPath : SITE_DEFAULT_ENTRY;
+  const candidates = sitePathCandidates(requestedPath, entryPath);
+  const forceAttachment = new URL(request.url).searchParams.get('download') === '1';
+  for (const candidate of candidates) {
+    const mapped = await getSiteFileRecord(site.id, candidate, env);
+    if (!mapped) continue;
+    const meta = await readFileMeta(mapped.fileId, env);
+    if (!meta) continue;
+    if (isMetaExpired(meta)) {
+      return htmlResponse(expiredFileHTML(meta), 410, { 'Cache-Control': 'no-store' });
+    }
+    const response = await serveR2File(mapped.fileId, request, env, {
+      ...meta,
+      name: mapped.fileName || meta.name,
+      contentType: siteFileContentType(candidate, mapped.contentType || meta.contentType, mapped.fileName || meta.name || candidate)
+    }, {
+      forceAttachment
+    });
+    if (response) return response;
+  }
+  const listing = await listSiteDirectory(site, requestedPath, env);
+  if (listing) {
+    return htmlResponse(siteDirectoryListingHTML(site, listing), 200, {
+      'Cache-Control': 'no-store'
+    });
+  }
+  return htmlResponse(siteNotFoundHTML(site.id, requestedPath), 404, { 'Cache-Control': 'no-store' });
+}
+
 async function viewerPage(id, env) {
   const meta = await readFileMeta(id, env);
   if (!meta) return htmlResponse(notFoundHTML(id), 404);
+  if (isMetaExpired(meta)) return htmlResponse(expiredFileHTML(meta), 410, { 'Cache-Control': 'no-store' });
   const contentType = meta.contentType || 'application/octet-stream';
   const html = isImage(contentType)
     ? imageViewerPage(meta)
@@ -1945,6 +3436,11 @@ async function viewerPage(id, env) {
 
 async function rawFile(id, request, env) {
   const meta = await readFileMeta(id, env);
+  if (isMetaExpired(meta)) {
+    return htmlResponse(expiredFileHTML(meta), 410, {
+      'Cache-Control': 'no-store'
+    });
+  }
   const fromR2 = await serveR2File(id, request, env, meta);
   if (fromR2) return fromR2;
   return htmlResponse(notFoundHTML(id), 404);
@@ -1953,6 +3449,11 @@ async function rawFile(id, request, env) {
 async function controlledDownload(id, request, env) {
   const result = await recordDownloadAndGetMeta(id, env);
   if (!result.success) {
+    if (result.status === 410) {
+      return htmlResponse(expiredFileHTML(result.meta), 410, {
+        'Cache-Control': 'no-store'
+      });
+    }
     if (result.status === 403) {
       return htmlResponse(downloadLimitExceededHTML(result.meta), 403, {
         'Cache-Control': 'no-store'
@@ -1978,6 +3479,25 @@ export default {
     if (url.hostname === 'okfile.com') {
       url.hostname = 'www.okfile.com';
       return Response.redirect(url.toString(), 301);
+    }
+    if (url.hostname === 'ok26.org' || url.hostname === 'www.ok26.org') {
+      url.protocol = 'https:';
+      url.hostname = 'www.okfile.com';
+      return Response.redirect(url.toString(), 301);
+    }
+    if ((request.method === 'GET' || request.method === 'HEAD') && canResolveSiteFromHostname(url.hostname)) {
+      const site = await getSiteByHostname(url.hostname, env);
+      if (site) {
+        return sitePage(site, url.pathname, request, env);
+      }
+      return htmlResponse(siteNotFoundHTML('unknown', url.pathname), 404, {
+        'Cache-Control': 'no-store'
+      });
+    }
+    if (!env.ASSETS && url.hostname.endsWith('.ok26.org') && url.hostname !== 'ok26.org') {
+      return htmlResponse(siteNotFoundHTML('unknown', url.pathname), 404, {
+        'Cache-Control': 'no-store'
+      });
     }
     if (request.method === 'GET' && url.pathname === BAIDU_VERIFY_PATH) {
       return htmlResponse(BAIDU_VERIFY_CONTENT, 200, {
@@ -2031,7 +3551,7 @@ export default {
     if (request.method === 'GET' && (url.pathname === '/en/account' || url.pathname === '/en/account/')) {
       return htmlResponse(accountPage('en'), 200, { 'X-Robots-Tag': 'noindex, follow' });
     }
-    if (url.pathname === '/admin') return htmlResponse(adminPage());
+    if (url.pathname === '/admin') return redirect(`${ADMIN_PANEL_ORIGIN}/`);
     if (url.pathname === '/auth/verify' && request.method === 'GET') return handleVerify(request, env);
 
     if (url.pathname === '/api/auth/request-link' && request.method === 'POST') return handleAuthRequestLink(request, env);
@@ -2039,6 +3559,7 @@ export default {
     if (url.pathname === '/api/account/me' && request.method === 'GET') return handleAccountMe(request, env);
     if (url.pathname === '/api/account/api-keys' && request.method === 'POST') return handleCreateApiKey(request, env);
     if (url.pathname === '/api/admin/api-keys' && request.method === 'GET') return handleAdminApiKeys(request, env);
+    if (url.pathname === '/api/admin/cleanup-expired' && request.method === 'POST') return handleAdminCleanupExpired(request, env);
 
     const adminKeyMatch = url.pathname.match(/^\/api\/admin\/api-keys\/([^/]+)$/);
     if (adminKeyMatch && request.method === 'POST') {
@@ -2046,6 +3567,8 @@ export default {
     }
 
     if (url.pathname === '/api/upload/config' && request.method === 'GET') return handleUploadConfig(env);
+    if (url.pathname === '/api/site/prepare' && request.method === 'POST') return handleSitePrepare(request, env);
+    if (url.pathname === '/api/site/complete' && request.method === 'POST') return handleSiteComplete(request, env);
     if (url.pathname === '/api/upload/prepare' && request.method === 'POST') return handleUploadPrepare(request, env);
     if (url.pathname === '/api/upload/complete' && request.method === 'POST') return handleUploadComplete(request, env);
     
@@ -2067,5 +3590,13 @@ export default {
     }
 
     return env.ASSETS.fetch(request);
+  },
+  async scheduled(controller, env, ctx) {
+    const job = runScheduledCleanup(env);
+    if (ctx?.waitUntil) {
+      ctx.waitUntil(job);
+      return;
+    }
+    await job;
   }
 };
