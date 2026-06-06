@@ -4,8 +4,13 @@ const EXPIRED_CLEANUP_BATCH_LIMIT = 200;
 const PUBLIC_SITE_EXAMPLE_ORIGIN = 'https://okfile.com';
 const PUBLISH_DOMAIN_SETTING_KEY = 'publish_origin';
 const META_PREFIX = '__meta__/';
+const SESSION_PREFIX = '__upload_sessions__/';
+const SITE_SESSION_PREFIX = '__site_sessions__/';
 const SITE_UPDATE_TOKEN_PREFIX = '__site_update_tokens__/';
 const SESSION_COOKIE = 'okfile_session';
+const R2_STANDARD_STORAGE_PRICE_PER_GB_MONTH = 0.015;
+const R2_STANDARD_STORAGE_FREE_GB = 10;
+const R2_LIST_PAGE_LIMIT = 1000;
 
 function json(data, status = 200, extraHeaders = {}) {
   return new Response(JSON.stringify(data), {
@@ -72,6 +77,47 @@ function formatSize(size) {
   if (size >= 1024 * 1024) return `${(size / 1024 / 1024).toFixed(1)} MB`;
   if (size >= 1024) return `${(size / 1024).toFixed(0)} KB`;
   return `${size} B`;
+}
+
+function toGb(size) {
+  return Number(size || 0) / 1024 / 1024 / 1024;
+}
+
+function estimateMonthlyStorageCost(bytes) {
+  const totalGb = toGb(bytes);
+  const grossUsd = totalGb * R2_STANDARD_STORAGE_PRICE_PER_GB_MONTH;
+  const billableGb = Math.max(totalGb - R2_STANDARD_STORAGE_FREE_GB, 0);
+  const billableUsd = billableGb * R2_STANDARD_STORAGE_PRICE_PER_GB_MONTH;
+  return {
+    totalGb,
+    billableGb,
+    grossUsd,
+    billableUsd,
+    freeGb: R2_STANDARD_STORAGE_FREE_GB,
+    unitUsdPerGbMonth: R2_STANDARD_STORAGE_PRICE_PER_GB_MONTH
+  };
+}
+
+function chunkArray(items, chunkSize = 100) {
+  const list = Array.isArray(items) ? items : [];
+  const size = Math.max(1, chunkSize);
+  const chunks = [];
+  for (let index = 0; index < list.length; index += size) {
+    chunks.push(list.slice(index, index + size));
+  }
+  return chunks;
+}
+
+function placeholders(count) {
+  return Array.from({ length: Math.max(0, count) }, () => '?').join(', ');
+}
+
+function isInternalBucketKey(key) {
+  const value = String(key || '');
+  return value.startsWith(META_PREFIX)
+    || value.startsWith(SESSION_PREFIX)
+    || value.startsWith(SITE_SESSION_PREFIX)
+    || value.startsWith(SITE_UPDATE_TOKEN_PREFIX);
 }
 
 function generateId(len = 8) {
@@ -150,6 +196,27 @@ async function ensureAppSettingsTable(env) {
       updated_at TEXT NOT NULL
     )`
   ).run();
+}
+
+async function ensurePublishedFilesTable(env) {
+  await env.DB.prepare(
+    `CREATE TABLE IF NOT EXISTS published_files (
+      id TEXT PRIMARY KEY,
+      file_name TEXT NOT NULL,
+      content_type TEXT,
+      size INTEGER NOT NULL DEFAULT 0,
+      publish_origin TEXT NOT NULL,
+      view_url TEXT NOT NULL,
+      download_url TEXT NOT NULL,
+      play_url TEXT NOT NULL,
+      api_key_id TEXT,
+      user_id TEXT,
+      created_at TEXT NOT NULL
+    )`
+  ).run();
+  try {
+    await env.DB.prepare('ALTER TABLE published_files ADD COLUMN size INTEGER NOT NULL DEFAULT 0').run();
+  } catch {}
 }
 
 async function ensureSitesTables(env) {
@@ -477,6 +544,10 @@ function metaKey(id) {
   return `${META_PREFIX}${id}.json`;
 }
 
+function siteSessionKey(id) {
+  return `${SITE_SESSION_PREFIX}${id}.json`;
+}
+
 function siteUpdateTokenKey(token) {
   return `${SITE_UPDATE_TOKEN_PREFIX}${token}.json`;
 }
@@ -526,6 +597,8 @@ function parseMetaIdFromKey(key) {
 async function deleteFileAndMeta(id, env) {
   await env.FILES.delete(id);
   await env.FILES.delete(metaKey(id));
+  await ensurePublishedFilesTable(env);
+  await env.DB.prepare('DELETE FROM published_files WHERE id = ?').bind(id).run();
 }
 
 async function cleanupExpiredFiles(env, options = {}) {
@@ -555,6 +628,149 @@ async function cleanupExpiredFiles(env, options = {}) {
     truncated: Boolean(listed.truncated),
     cursor: listed.cursor || null
   };
+}
+
+async function collectBucketStorageStats(env) {
+  let cursor;
+  let totalObjects = 0;
+  let totalBytes = 0;
+  let internalObjects = 0;
+  let internalBytes = 0;
+  let userObjects = 0;
+  let userBytes = 0;
+  do {
+    const listed = await env.FILES.list({ cursor, limit: R2_LIST_PAGE_LIMIT });
+    for (const object of listed.objects || []) {
+      const size = Number(object.size || 0);
+      totalObjects += 1;
+      totalBytes += size;
+      if (isInternalBucketKey(object.key)) {
+        internalObjects += 1;
+        internalBytes += size;
+      } else {
+        userObjects += 1;
+        userBytes += size;
+      }
+    }
+    cursor = listed.truncated ? listed.cursor : undefined;
+  } while (cursor);
+  return {
+    totalObjects,
+    totalBytes,
+    internalObjects,
+    internalBytes,
+    userObjects,
+    userBytes
+  };
+}
+
+async function collectStorageStats(env) {
+  await ensureSitesTables(env);
+  await ensurePublishedFilesTable(env);
+  const now = new Date().toISOString();
+  const summaryRow = await env.DB.prepare(
+    `WITH referenced_objects AS (
+       SELECT file_id, MAX(size) AS size
+       FROM (
+         SELECT id AS file_id, size FROM published_files
+         UNION ALL
+         SELECT file_id, size FROM site_files
+         UNION ALL
+         SELECT file_id, size FROM site_release_files
+       ) refs
+       GROUP BY file_id
+     )
+     SELECT
+       (SELECT COUNT(*) FROM published_files) AS published_file_count,
+       (SELECT COALESCE(SUM(size), 0) FROM published_files) AS published_file_bytes,
+       (SELECT COUNT(*) FROM sites) AS site_count,
+       (SELECT COUNT(*) FROM sites WHERE NOT (status = 'expired' OR (expires_at IS NOT NULL AND expires_at <= ?))) AS active_site_count,
+       (SELECT COALESCE(SUM(total_size), 0) FROM sites WHERE NOT (status = 'expired' OR (expires_at IS NOT NULL AND expires_at <= ?))) AS active_site_bytes,
+       (SELECT COUNT(*) FROM site_releases) AS release_count,
+       (SELECT COUNT(*) FROM referenced_objects) AS referenced_object_count,
+       (SELECT COALESCE(SUM(size), 0) FROM referenced_objects) AS referenced_object_bytes`
+  ).bind(now, now).first();
+  const bucket = await collectBucketStorageStats(env);
+  return {
+    success: true,
+    counts: {
+      publishedFiles: Number(summaryRow?.published_file_count || 0),
+      sites: Number(summaryRow?.site_count || 0),
+      activeSites: Number(summaryRow?.active_site_count || 0),
+      releases: Number(summaryRow?.release_count || 0),
+      referencedObjects: Number(summaryRow?.referenced_object_count || 0)
+    },
+    bytes: {
+      publishedFiles: Number(summaryRow?.published_file_bytes || 0),
+      activeSites: Number(summaryRow?.active_site_bytes || 0),
+      referencedObjects: Number(summaryRow?.referenced_object_bytes || 0),
+      bucketTotal: bucket.totalBytes,
+      bucketUserObjects: bucket.userBytes,
+      bucketInternalObjects: bucket.internalBytes
+    },
+    objects: {
+      bucketTotal: bucket.totalObjects,
+      bucketUserObjects: bucket.userObjects,
+      bucketInternalObjects: bucket.internalObjects
+    },
+    estimates: {
+      bucketTotal: estimateMonthlyStorageCost(bucket.totalBytes),
+      bucketUserObjects: estimateMonthlyStorageCost(bucket.userBytes)
+    }
+  };
+}
+
+async function listSiteStoredFileIds(siteId, env) {
+  await ensureSitesTables(env);
+  const result = await env.DB.prepare(
+    `SELECT DISTINCT file_id
+     FROM (
+       SELECT file_id FROM site_files WHERE site_id = ?
+       UNION ALL
+       SELECT srf.file_id
+       FROM site_release_files srf
+       INNER JOIN site_releases sr ON sr.id = srf.release_id
+       WHERE sr.site_id = ?
+     ) refs`
+  ).bind(siteId, siteId).all();
+  return Array.from(new Set((result.results || []).map((item) => String(item.file_id || '')).filter(Boolean)));
+}
+
+async function listRetainedFileIdsForDeletedSite(siteId, fileIds, env) {
+  await ensureSitesTables(env);
+  await ensurePublishedFilesTable(env);
+  const retained = new Set();
+  for (const chunk of chunkArray(fileIds, 100)) {
+    if (!chunk.length) continue;
+    const inClause = placeholders(chunk.length);
+    const published = await env.DB.prepare(
+      `SELECT id AS file_id
+       FROM published_files
+       WHERE id IN (${inClause})`
+    ).bind(...chunk).all();
+    for (const item of published.results || []) retained.add(String(item.file_id || ''));
+    const currentSites = await env.DB.prepare(
+      `SELECT DISTINCT file_id
+       FROM site_files
+       WHERE file_id IN (${inClause}) AND site_id <> ?`
+    ).bind(...chunk, siteId).all();
+    for (const item of currentSites.results || []) retained.add(String(item.file_id || ''));
+    const releases = await env.DB.prepare(
+      `SELECT DISTINCT srf.file_id
+       FROM site_release_files srf
+       INNER JOIN site_releases sr ON sr.id = srf.release_id
+       WHERE srf.file_id IN (${inClause}) AND sr.site_id <> ?`
+    ).bind(...chunk, siteId).all();
+    for (const item of releases.results || []) retained.add(String(item.file_id || ''));
+  }
+  return retained;
+}
+
+async function deleteStoredObject(id, env) {
+  await env.FILES.delete(id);
+  await env.FILES.delete(metaKey(id));
+  await ensurePublishedFilesTable(env);
+  await env.DB.prepare('DELETE FROM published_files WHERE id = ?').bind(id).run();
 }
 
 async function getUserByEmail(email, env) {
@@ -777,10 +993,20 @@ function adminHomePage() {
 
     <div class="card hidden" id="dashboardCard">
       <h1>管理员后台</h1>
-      <p class="muted">这里可以管理发布域名、查看站点子域名、调整 API Key 限制，并手动清理过期文件。</p>
+      <p class="muted">这里可以管理发布域名、查看站点子域名、调整 API Key 限制，并查看系统存储占用、估算月度存储费用、清理过期文件。</p>
       <div class="note">当前登录邮箱：<span id="currentUser" class="mono"></span></div>
       <div class="msg hidden" id="adminMsg"></div>
       <div class="err hidden" id="adminErr"></div>
+      <div class="card" style="margin-top:16px;margin-bottom:16px">
+        <div class="inline-row" style="justify-content:space-between;align-items:flex-start">
+          <div>
+            <h2>系统存储概览</h2>
+            <p class="muted">同时展示当前 R2 桶实际占用、业务文件对象占用，以及按标准存储单价估算的月度费用。</p>
+          </div>
+          <button class="btn-secondary" id="refreshStorageStatsBtn" type="button">刷新统计</button>
+        </div>
+        <div id="storageStatsWrap" class="muted" style="margin-top:12px">正在加载系统存储统计...</div>
+      </div>
       <div class="card" style="margin-top:16px;margin-bottom:16px">
         <h2>发布域名</h2>
       <p class="muted">这里配置上传完成后 <code>url</code>、<code>downloadUrl</code>、<code>playUrl</code> 使用的对外域名，例如 <code>ok26.org</code>。页面和文档中的示例仍使用 <code>${PUBLIC_SITE_EXAMPLE_ORIGIN}</code>。</p>
@@ -793,7 +1019,7 @@ function adminHomePage() {
       </div>
       <div class="card" style="margin-top:16px;margin-bottom:16px">
         <h2>站点管理</h2>
-        <p class="muted">支持搜索、分页、查看文件清单、设置过期时间，以及删除站点映射。删除映射只会下线站点，不会删除底层文件对象。</p>
+        <p class="muted">支持搜索、分页、查看文件清单、设置过期时间，以及删除站点映射或彻底删除整个网站。彻底删除会尝试清理未被其它记录复用的底层文件对象。</p>
         <div class="note" id="siteManageHint">站点子域名会使用当前发布域名，例如 st-xxxx.ok26.org。</div>
         <div class="inline-row" style="margin-top:14px">
           <input id="siteQuery" type="text" placeholder="搜索站点名、子域名、邮箱或站点 ID">
@@ -878,6 +1104,10 @@ function formatSize(size){
   if(size >= 1024) return Math.round(size / 1024) + ' KB';
   return String(size) + ' B';
 }
+function formatUsd(value){
+  const amount = Number(value || 0);
+  return '$' + amount.toFixed(amount >= 10 ? 2 : 4);
+}
 function siteStatus(item){
   if(item.expiresAt && new Date(item.expiresAt).getTime() <= Date.now()) return 'expired';
   return item.status || 'active';
@@ -914,6 +1144,31 @@ async function openSiteUpdate(siteId){
   }catch(error){
     show($('adminErr'),error.message);
   }
+}
+function metricCard(label, value, detail){
+  return '<div class="item"><div class="k">' + esc(label) + '</div><div class="v">' + esc(value) + '</div>' + (detail ? '<div class="muted" style="margin-top:6px">' + esc(detail) + '</div>' : '') + '</div>';
+}
+async function loadStorageStats(){
+  hide($('adminErr'));
+  const wrap = $('storageStatsWrap');
+  wrap.textContent = '正在加载系统存储统计...';
+  const data = await api('/api/admin/storage-stats');
+  const counts = data.counts || {};
+  const bytes = data.bytes || {};
+  const objects = data.objects || {};
+  const bucketCost = data.estimates?.bucketTotal || {};
+  const userCost = data.estimates?.bucketUserObjects || {};
+  wrap.innerHTML = '<div class="site-detail-grid">' +
+    metricCard('桶总占用', formatSize(Number(bytes.bucketTotal || 0)), '对象 ' + String(objects.bucketTotal || 0) + ' 个') +
+    metricCard('业务文件占用', formatSize(Number(bytes.bucketUserObjects || 0)), '对象 ' + String(objects.bucketUserObjects || 0) + ' 个') +
+    metricCard('内部元数据占用', formatSize(Number(bytes.bucketInternalObjects || 0)), '对象 ' + String(objects.bucketInternalObjects || 0) + ' 个') +
+    metricCard('当前单文件总量', formatSize(Number(bytes.publishedFiles || 0)), '记录 ' + String(counts.publishedFiles || 0) + ' 个') +
+    metricCard('当前站点总量', formatSize(Number(bytes.activeSites || 0)), '站点 ' + String(counts.sites || 0) + ' 个，active ' + String(counts.activeSites || 0) + ' 个') +
+    metricCard('历史引用对象', formatSize(Number(bytes.referencedObjects || 0)), '唯一对象 ' + String(counts.referencedObjects || 0) + ' 个，版本 ' + String(counts.releases || 0) + ' 个') +
+    metricCard('预估月存储费', formatUsd(bucketCost.billableUsd || 0), '按桶总占用估算；总量 ' + Number(bucketCost.totalGb || 0).toFixed(3) + ' GB，免费额度 ' + Number(bucketCost.freeGb || 0).toFixed(0) + ' GB') +
+    metricCard('业务文件月费参考', formatUsd(userCost.billableUsd || 0), '按业务对象估算；总量 ' + Number(userCost.totalGb || 0).toFixed(3) + ' GB') +
+  '</div>' +
+  '<div class="note">当前按标准存储单价 ' + formatUsd(bucketCost.unitUsdPerGbMonth || 0) + ' / GB-month 估算，仅包含存储，不包含请求类费用。</div>';
 }
 function row(item){
   if(!item.hasApiKey){
@@ -990,6 +1245,7 @@ function siteRow(item){
   actions.push('<button class="btn-secondary" data-extend-site="' + esc(item.id) + '">延长 7 天</button>');
   actions.push('<button class="btn-secondary" data-expire-site="' + esc(item.id) + '">立即失效</button>');
   actions.push('<button class="btn-danger" data-delete-site="' + esc(item.id) + '">删除映射</button>');
+  actions.push('<button class="btn-danger" data-destroy-site="' + esc(item.id) + '">彻底删除</button>');
   return '<tr>' +
     '<td><div>' + esc(item.name || item.id) + '</div><div class="muted mono">' + esc(item.id) + '</div></td>' +
     '<td><div class="mono">' + esc(item.siteHostname || '-') + '</div><div class="muted">' + esc(item.siteUrl || '-') + '</div></td>' +
@@ -1068,6 +1324,7 @@ async function loadSiteDetail(siteId){
       '<button class="btn-secondary" id="siteClearExpiryBtn" type="button">清除过期时间</button>' +
       (site.siteUrl ? '<a class="btn-secondary" href="' + esc(site.siteUrl) + '" target="_blank" rel="noopener">打开站点</a>' : '') +
       '<button class="btn-secondary" id="siteOpenUpdateBtn" type="button">更新网站</button>' +
+      '<button class="btn-danger" id="siteDestroyBtn" type="button">彻底删除网站</button>' +
     '</div>' +
     '<div class="note">更新方式：点击“更新网站”后会跳转到上传页，并以当前站点 ID 创建新版本。全部文件上传完成后，站点会原子切换到新版本；这里也可以直接切回历史版本。</div>' +
     '<table><thead><tr><th>版本</th><th>状态</th><th>入口</th><th>文件数/大小</th><th>时间 / 摘要</th><th>操作</th></tr></thead><tbody>' + (releaseRows || '<tr><td colspan="6" class="muted">当前还没有版本记录。</td></tr>') + '</tbody></table>' +
@@ -1153,6 +1410,22 @@ async function loadSiteDetail(siteId){
   });
   $('siteOpenUpdateBtn').onclick = async () => {
     await openSiteUpdate(site.id);
+  };
+  $('siteDestroyBtn').onclick = async () => {
+    hide($('adminErr'));
+    hide($('adminMsg'));
+    if(!confirm('确认彻底删除这个网站吗？会删除站点映射、版本记录，并尽量清理未被其它记录引用的底层文件对象。')) return;
+    try{
+      const result = await api('/api/admin/sites/' + encodeURIComponent(site.id) + '/destroy',{method:'POST'});
+      siteState.selectedSiteId = '';
+      $('siteDetailWrap').innerHTML = '';
+      $('siteDetailWrap').classList.add('hidden');
+      show($('adminMsg'),'站点已彻底删除，删除对象 ' + String(result.deletedObjectCount || 0) + ' 个，保留复用对象 ' + String(result.retainedObjectCount || 0) + ' 个');
+      await loadSitesTable();
+      await loadStorageStats();
+    }catch(error){
+      show($('adminErr'),error.message);
+    }
   };
 }
 async function loadSitesTable(){
@@ -1245,6 +1518,28 @@ async function loadSitesTable(){
         }
         show($('adminMsg'),'站点映射已删除');
         await loadSitesTable();
+        await loadStorageStats();
+      }catch(error){
+        show($('adminErr'),error.message);
+      }
+    };
+  });
+  document.querySelectorAll('[data-destroy-site]').forEach((btn)=>{
+    btn.onclick = async () => {
+      hide($('adminErr'));
+      hide($('adminMsg'));
+      const siteId = btn.getAttribute('data-destroy-site');
+      if(!confirm('确认彻底删除这个网站吗？这会删除站点映射、历史版本，以及未被其它记录复用的底层文件对象。')) return;
+      try{
+        const result = await api('/api/admin/sites/' + encodeURIComponent(siteId) + '/destroy',{method:'POST'});
+        if(siteState.selectedSiteId === siteId){
+          siteState.selectedSiteId = '';
+          $('siteDetailWrap').innerHTML = '';
+          $('siteDetailWrap').classList.add('hidden');
+        }
+        show($('adminMsg'),'站点已彻底删除，删除对象 ' + String(result.deletedObjectCount || 0) + ' 个，保留复用对象 ' + String(result.retainedObjectCount || 0) + ' 个');
+        await loadSitesTable();
+        await loadStorageStats();
       }catch(error){
         show($('adminErr'),error.message);
       }
@@ -1276,6 +1571,7 @@ async function runCleanup(){
     $('cleanupResult').textContent = '已检查 ' + data.checked + ' 个，删除 ' + data.deleted + ' 个' + extra;
     show($('adminMsg'),'过期文件清理完成');
     await loadAdminTable();
+    await loadStorageStats();
   }catch(error){
     $('cleanupResult').textContent = '清理失败';
     show($('adminErr'),error.message);
@@ -1297,6 +1593,7 @@ async function loadMe(){
     }
     $('currentUser').textContent = me.email;
     switchView('dashboard');
+    await loadStorageStats();
     await loadPublishDomain();
     await loadSitesTable();
     await loadAdminTable();
@@ -1360,6 +1657,7 @@ $('siteResetBtn').onclick = async () => {
   await loadSitesTable();
 };
 $('cleanupBtn').onclick = runCleanup;
+$('refreshStorageStatsBtn').onclick = loadStorageStats;
 logoutBtn.onclick = async () => {
   await fetch('/api/auth/logout',{method:'POST',credentials:'same-origin'});
   location.reload();
@@ -1488,6 +1786,13 @@ async function handleAdminCleanupExpired(request, env) {
     limit: body?.limit || EXPIRED_CLEANUP_BATCH_LIMIT
   });
   return json(result);
+}
+
+async function handleAdminStorageStats(request, env) {
+  const session = await getSessionFromRequest(request, env);
+  if (!session) return json({ error: '请先登录' }, 401);
+  if (!session.isAdmin) return json({ error: '没有管理员权限' }, 403);
+  return json(await collectStorageStats(env));
 }
 
 async function handleAdminGetPublishDomain(request, env) {
@@ -1782,6 +2087,39 @@ async function handleAdminDeleteSite(request, siteId, env) {
   return json({ success: true, siteId, deleted: true });
 }
 
+async function handleAdminDestroySite(request, siteId, env) {
+  const session = await getSessionFromRequest(request, env);
+  if (!session) return json({ error: '请先登录' }, 401);
+  if (!session.isAdmin) return json({ error: '没有管理员权限' }, 403);
+  await ensureSitesTables(env);
+  const existing = await env.DB.prepare('SELECT id, name FROM sites WHERE id = ?').bind(siteId).first();
+  if (!existing) return json({ error: '站点不存在' }, 404);
+  await ensureSiteReleaseBackfill(siteId, env);
+  const fileIds = await listSiteStoredFileIds(siteId, env);
+  const retained = await listRetainedFileIdsForDeletedSite(siteId, fileIds, env);
+  const deletableObjectIds = fileIds.filter((fileId) => !retained.has(fileId));
+  await env.DB.batch([
+    env.DB.prepare('DELETE FROM site_release_files WHERE release_id IN (SELECT id FROM site_releases WHERE site_id = ?)').bind(siteId),
+    env.DB.prepare('DELETE FROM site_releases WHERE site_id = ?').bind(siteId),
+    env.DB.prepare('DELETE FROM site_files WHERE site_id = ?').bind(siteId),
+    env.DB.prepare('DELETE FROM sites WHERE id = ?').bind(siteId)
+  ]);
+  await env.FILES.delete(siteSessionKey(siteId));
+  for (const objectId of deletableObjectIds) {
+    await deleteStoredObject(objectId, env);
+  }
+  return json({
+    success: true,
+    siteId,
+    siteName: existing.name || siteId,
+    deleted: true,
+    deletedSiteMapping: true,
+    deletedObjectCount: deletableObjectIds.length,
+    retainedObjectCount: fileIds.length - deletableObjectIds.length,
+    deletedObjectIds: deletableObjectIds
+  });
+}
+
 async function handleAdminUpdateSiteExpiry(request, siteId, env) {
   const session = await getSessionFromRequest(request, env);
   if (!session) return json({ error: '请先登录' }, 401);
@@ -1845,6 +2183,7 @@ export default {
     if (url.pathname === '/api/auth/logout' && request.method === 'POST') return handleLogout(request, env);
     if (url.pathname === '/api/account/me' && request.method === 'GET') return handleAccountMe(request, env);
     if (url.pathname === '/api/admin/api-keys' && request.method === 'GET') return handleAdminApiKeys(request, env);
+    if (url.pathname === '/api/admin/storage-stats' && request.method === 'GET') return handleAdminStorageStats(request, env);
     if (url.pathname === '/api/admin/sites' && request.method === 'GET') return handleAdminSites(request, env);
     if (url.pathname === '/api/admin/publish-domain' && request.method === 'GET') return handleAdminGetPublishDomain(request, env);
     if (url.pathname === '/api/admin/publish-domain' && request.method === 'POST') return handleAdminSetPublishDomain(request, env);
@@ -1865,6 +2204,10 @@ export default {
     const adminSiteReleaseMatch = url.pathname.match(/^\/api\/admin\/sites\/([^/]+)\/releases\/([^/]+)\/activate$/);
     if (adminSiteReleaseMatch && request.method === 'POST') {
       return handleAdminActivateSiteRelease(request, adminSiteReleaseMatch[1], adminSiteReleaseMatch[2], env);
+    }
+    const adminSiteDestroyMatch = url.pathname.match(/^\/api\/admin\/sites\/([^/]+)\/destroy$/);
+    if (adminSiteDestroyMatch && request.method === 'POST') {
+      return handleAdminDestroySite(request, adminSiteDestroyMatch[1], env);
     }
     const adminSiteMatch = url.pathname.match(/^\/api\/admin\/sites\/([^/]+)\/(expire|delete|expiry)$/);
     if (adminSiteMatch && request.method === 'POST') {

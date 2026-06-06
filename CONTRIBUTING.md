@@ -27,6 +27,15 @@ Good contribution areas:
 
 Please keep changes focused. Small, reviewable pull requests are preferred.
 
+## Published Articles
+
+If you prepare or publish outward-facing articles about OkFile:
+
+- archive each article as a single Markdown file in `docs/*.md`
+- follow the flat naming pattern `docs/{platform}-{slug}.md`
+- keep the in-repo copy updated as the source of truth for future edits
+- see `docs/README.md` for the archive rule and naming examples
+
 ## Coding Guidelines
 
 - keep edits ASCII unless the file already uses non-ASCII content

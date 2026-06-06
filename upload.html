@@ -24,11 +24,6 @@
   .dropzone.has-files .icon{margin:0 0 12px}
   .dropzone .label{font-size:15px;color:#aaa}.dropzone .label em{color:#2563eb;font-style:normal;cursor:pointer}
   .dropzone .hint{font-size:12px;color:#555;margin-top:6px}
-  .selected-summary{display:none;margin-top:14px;padding-top:12px;border-top:1px solid #242424}
-  .selected-summary.show{display:block}
-  .selected-summary .summary-title{font-size:12px;color:#b6c2d0;margin-bottom:8px}
-  .selected-summary .summary-list{display:flex;flex-direction:column;gap:6px}
-  .selected-summary .summary-item{font-size:13px;color:#e5e7eb;word-break:break-all}
   .native-file-input{position:absolute;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none}
   .picker-actions{width:100%;max-width:720px;display:flex;justify-content:center;gap:10px;flex-wrap:wrap;margin-top:12px}
   .picker-btn{padding:10px 18px;border-radius:10px;border:1px solid #2b2b2b;background:#111;color:#d1d5db;cursor:pointer;transition:.2s}
@@ -62,7 +57,7 @@
 
   /* Actions bar */
   .actions-bar{width:100%;max-width:720px;margin-top:16px;display:none}
-  .actions-bar.show{display:flex;gap:10px;justify-content:center}
+  .actions-bar.show{display:flex;gap:10px;justify-content:flex-start;flex-wrap:wrap}
   .actions-bar button{padding:10px 28px;border-radius:10px;font-size:14px;cursor:pointer;transition:.2s;font-weight:500}
   .btn-upload{background:#2563eb;color:#fff;border:none}
   .btn-upload:hover{background:#1d4ed8}
@@ -138,7 +133,6 @@
     <span class="zh">支持图片 / 视频 / PDF / 常见文件，也支持整个静态站点目录；单文件最大 <span class="max-size-label">500MB</span></span>
     <span class="en">Supports images / videos / PDFs / common files, plus full static site folders. Max file size <span class="max-size-label">500MB</span>. Auto-chunks if exceeded.</span>
   </div>
-  <div class="selected-summary" id="selectedSummary" aria-live="polite"></div>
 </label>
 <input type="file" id="fi" class="native-file-input" multiple>
 <input type="file" id="di" class="native-file-input" webkitdirectory directory multiple>
@@ -151,6 +145,12 @@
   <span class="en"><strong>Site publish:</strong> Select a full static site folder and OkFile preserves nested paths, then publishes it to a dedicated subdomain. If root `index.html` exists, the site root renders it. Otherwise the site root automatically shows a directory listing. Agents should not generate a synthetic `index.html` just to list files; simply upload the real folder tree. Nested subdirectory paths remain directly accessible after publish.</span>
 </div>
 
+<!-- Actions -->
+<div class="actions-bar" id="ab">
+  <button type="button" class="btn-upload" id="upBtn">&#9653; <span class="btn-text"><span class="zh">开始上载</span><span class="en">Start Upload</span></span> (<span id="uc">0</span>)</button>
+  <button class="btn-clear" onclick="clearFiles()"><span class="zh">清空重新选择</span><span class="en">Clear and Reselect</span></button>
+</div>
+
 <!-- File List -->
 <div class="file-list" id="fl">
   <div class="file-list-header">
@@ -158,12 +158,6 @@
     <button class="clear-btn" onclick="clearFiles()"><span class="zh">清空列表</span><span class="en">Clear List</span></button>
   </div>
   <div id="fiList"></div>
-</div>
-
-<!-- Actions -->
-<div class="actions-bar" id="ab">
-  <button type="button" class="btn-upload" id="upBtn">&#9653; <span class="btn-text"><span class="zh">开始上载</span><span class="en">Start Upload</span></span> (<span id="uc">0</span>)</button>
-  <button class="btn-clear" onclick="clearFiles()"><span class="zh">清空重新选择</span><span class="en">Clear and Reselect</span></button>
 </div>
 
 <div class="error" id="err"></div>
@@ -309,7 +303,6 @@ const $ = id => document.getElementById(id);
 const dz=$('dz'), fi=$('fi'), di=$('di'), fl=$('fl'), fc=$('fc'), fiList=$('fiList');
 const ab=$('ab'), upBtn=$('upBtn');
 const err=$('err'), res=$('res'), grid=$('grid'), ts=$('ts');
-const selectedSummary = $('selectedSummary');
 const siteResultCard = $('siteResultCard');
 const pickFilesBtn = $('pickFilesBtn');
 const pickFolderBtn = $('pickFolderBtn');
@@ -458,8 +451,6 @@ function renderFileList() {
     fl.style.display = 'none';
     ab.style.display = 'none';
     dz.classList.remove('has-files');
-    selectedSummary.classList.remove('show');
-    selectedSummary.innerHTML = '';
     dz.style.display = 'block';
     return;
   }
@@ -470,11 +461,6 @@ function renderFileList() {
   dz.classList.add('has-files');
   dz.style.display = 'block';
   fc.textContent = `${pendingFiles.length} ${batchMode === 'site' ? _t('siteWord') : _t('fileWord')}`;
-  selectedSummary.classList.add('show');
-  selectedSummary.innerHTML = `
-    <div class="summary-title">${batchMode === 'site' ? (currentLang === 'zh-CN' ? '已选择站点文件' : 'Selected site files') : (currentLang === 'zh-CN' ? '已选择文件' : 'Selected files')}</div>
-    <div class="summary-list">${pendingFiles.map(item => `<div class="summary-item">${escHTML(item.relativePath || item.file.name)}</div>`).join('')}</div>
-  `;
 
   fiList.innerHTML = '';
   for (const item of pendingFiles) {

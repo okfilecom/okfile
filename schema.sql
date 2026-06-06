@@ -66,6 +66,7 @@ CREATE TABLE IF NOT EXISTS published_files (
   id TEXT PRIMARY KEY,
   file_name TEXT NOT NULL,
   content_type TEXT,
+  size INTEGER NOT NULL DEFAULT 0,
   publish_origin TEXT NOT NULL,
   view_url TEXT NOT NULL,
   download_url TEXT NOT NULL,

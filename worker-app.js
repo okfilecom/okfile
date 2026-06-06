@@ -2031,6 +2031,7 @@ async function ensurePublishedFilesTable(env) {
       id TEXT PRIMARY KEY,
       file_name TEXT NOT NULL,
       content_type TEXT,
+      size INTEGER NOT NULL DEFAULT 0,
       publish_origin TEXT NOT NULL,
       view_url TEXT NOT NULL,
       download_url TEXT NOT NULL,
@@ -2040,6 +2041,9 @@ async function ensurePublishedFilesTable(env) {
       created_at TEXT NOT NULL
     )`
   ).run();
+  try {
+    await env.DB.prepare('ALTER TABLE published_files ADD COLUMN size INTEGER NOT NULL DEFAULT 0').run();
+  } catch {}
 }
 
 async function ensureSitesTables(env) {
@@ -2472,11 +2476,12 @@ async function recordPublishedFile(id, meta, links, session, env) {
   const now = new Date().toISOString();
   await env.DB.prepare(
     `INSERT INTO published_files (
-      id, file_name, content_type, publish_origin, view_url, download_url, play_url, api_key_id, user_id, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      id, file_name, content_type, size, publish_origin, view_url, download_url, play_url, api_key_id, user_id, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       file_name = excluded.file_name,
       content_type = excluded.content_type,
+      size = excluded.size,
       publish_origin = excluded.publish_origin,
       view_url = excluded.view_url,
       download_url = excluded.download_url,
@@ -2488,6 +2493,7 @@ async function recordPublishedFile(id, meta, links, session, env) {
     id,
     meta?.name || id,
     meta?.contentType || '',
+    Number(meta?.size || 0),
     normalizePublishOrigin(new URL(links.url).origin) || new URL(links.url).origin,
     links.url,
     links.downloadUrl,
@@ -3034,6 +3040,8 @@ function parseMetaIdFromKey(key) {
 async function deleteFileAndMeta(id, env) {
   await env.FILES.delete(id);
   await env.FILES.delete(metaKey(id));
+  await ensurePublishedFilesTable(env);
+  await env.DB.prepare('DELETE FROM published_files WHERE id = ?').bind(id).run();
 }
 
 async function cleanupExpiredFiles(env, options = {}) {
