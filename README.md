@@ -201,6 +201,14 @@ For site publishing:
 - if you upload a single wrapper folder such as `my-site/...`, OkFile strips `my-site/` automatically
 - if no root `index.html` exists, users land on a browsable directory listing instead of downloading an arbitrary file
 
+## Articles
+
+Published and outward-facing articles are archived in `docs/`:
+
+- docs/README.md
+- docs/devto-agent-delivery-publish-file-or-site-test-guide.md
+- docs/aliyun-workbuddy-agent-file-site-publish-test-guide.md
+
 ## Contributing
 
 Please read `CONTRIBUTING.md` before opening pull requests.

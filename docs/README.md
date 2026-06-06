@@ -32,3 +32,5 @@ Examples:
 ## Current Archive
 
 - `docs/tencent-workbuddy-agent-publish-file-or-site.md`
+- `docs/aliyun-workbuddy-agent-file-site-publish-test-guide.md`
+- `docs/devto-agent-delivery-publish-file-or-site-test-guide.md`
