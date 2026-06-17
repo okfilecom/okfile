@@ -6,6 +6,38 @@ Agent-first file upload and publish service built on Cloudflare Pages Functions,
 - Repository: `https://github.com/okfilecom/okfile`
 - License: `Apache-2.0`
 
+## Python CLI
+
+The published Python package name is `okfile`.
+
+Install the latest release from PyPI:
+
+```bash
+py -3 -m pip install okfile
+okfile --version
+```
+
+Install a pinned version when you need reproducible environments:
+
+```bash
+py -3 -m pip install okfile==1.2.2
+```
+
+Upgrade to the latest release:
+
+```bash
+py -3 -m pip install --upgrade okfile
+```
+
+Fallback wheel install:
+
+```bash
+py -3 -m pip install "https://www.okfile.com/downloads/okfile-1.2.2-py3-none-any.whl"
+```
+
+- PyPI: `https://pypi.org/project/okfile/`
+- CLI skill doc: `./SKILL.md`
+
 ## What It Does
 
 OkFile is designed for Agents, scripts, and lightweight manual upload use cases.
