@@ -1,6 +1,6 @@
 # Skill 发布渠道记录
 
-更新时间：2026-06-06
+更新时间：2026-06-18
 
 ## 当前统计
 
@@ -12,16 +12,18 @@
 
 | 序号 | 平台 | 网站 | 当前状态 | 对应文件 | 备注 |
 | --- | --- | --- | --- | --- | --- |
-| 1 | SkillHub | `https://skillhub.cn/` | 已提交 `1.0.3`，当前 `安全审核中` | `SKILL.skillhub.club.md` | 本地平台文档与打包副本已同步到 `1.0.3`，仓库里保留了 `.publish/skillhub/` 打包产物 |
-| 2 | Skills Hub | `https://skills-hub.ai/` | 已发布 `1.0.3` | `SKILL.skills-hub.md` | 当前仓库已有专用格式文档 |
-| 3 | The Skills Directory | `https://theskills.directory/` | 已确认存在自助提交入口，但当前暂时停止继续提交 | `SKILL.theskills.directory.md` | 本地平台文档已同步到 `1.0.3`，站点后端提交接口返回 `500`，先暂停 |
+| 1 | SkillHub | `https://skillhub.cn/` | 已提交 `1.2.3`，当前 `安全审核中` | `SKILL.skillhub.club.md` | 本地平台文档、打包副本和 zip 产物已同步到 `1.2.3` |
+| 2 | Skills Hub | `https://skills-hub.ai/` | `okfile-2` 已发布 `1.2.3` | `SKILL.skills-hub.md` | 已补齐 skill 正文与 Python CLI `1.2.3` 段落 |
+| 3 | The Skills Directory | `https://theskills.directory/` | 已进入正式提交，但站点后端仍返回 `500` | `SKILL.theskills.directory.md` | 本地平台文档已同步到 `1.2.3`，前端表单已完整填写并提交到 `/api/submit` |
 
 ## 仓库内相关文件
 
 - 主技能文档：`SKILL.md`
+- skills.sh 初始化技能目录：`okfile/SKILL.md`
 - SkillHub 渠道文档：`SKILL.skillhub.club.md`
 - Skills Hub 渠道文档：`SKILL.skills-hub.md`
 - The Skills Directory 渠道文档：`SKILL.theskills.directory.md`
+- npm launcher 包目录：`npm/okfile/`
 - SkillHub 打包目录：`.publish/skillhub/`
 - Trae 本地技能副本：`.trae/skills/okfile/SKILL.md`
 
@@ -45,14 +47,14 @@
 ## 当前建议状态
 
 - `skillhub.cn`
-  - 状态：已提交 `1.0.3`，当前 `安全审核中`
-  - 下一步：等待审核完成；如继续发新版，沿用已同步到 `1.0.3` 的 `SKILL.skillhub.club.md` 和 `.publish/skillhub/`
+  - 状态：已提交 `1.2.3`，当前 `安全审核中`
+  - 下一步：等待审核完成；如继续发新版，沿用已同步到 `1.2.3` 的 `SKILL.skillhub.club.md` 和 `.publish/skillhub/`
 - `skills-hub.ai`
-  - 状态：技能页已对外公开，当前最新版本为 `1.0.3`
-  - 下一步：后续发新版时沿用 `SKILL.skills-hub.md` 和现有 `okfile-2` 条目继续更新
+  - 状态：canonical 条目 `okfile-2` 已更新为 `1.2.3`
+  - 下一步：后续发新版时继续沿用 `SKILL.skills-hub.md` 和现有 `okfile-2` 条目，不再新建同名 slug
 - `theskills.directory`
-  - 状态：已确认开放自助发布，但当前暂停提交
-  - 下一步：如恢复提交，直接使用已同步到 `1.0.3` 的 `SKILL.theskills.directory.md`
+  - 状态：已确认开放自助发布并完成登录，但本次后端提交仍失败
+  - 下一步：如平台恢复正常，直接使用已同步到 `1.2.3` 的 `SKILL.theskills.directory.md` 重新提交
 
 ### SkillHub
 
@@ -111,10 +113,43 @@
   - 如后续版本更新，优先沿用当前技能页或其编辑页，不要重复新建同名条目
   - 本地平台专用文档已同步到 `1.0.3`
 
+### Skills Hub 三次更新
+
+- 平台：`skills-hub.ai`
+- 提交日期：`2026-06-18`
+- 提交账号：`okfilecom`
+- 提交入口：`https://skills-hub.ai/skills/okfile-2/edit`
+- 技能链接：`https://skills-hub.ai/skills/okfile-2`
+- 安装命令：`npx @skills-hub-ai/cli install okfile-2`
+- 使用文档：`SKILL.skills-hub.md`
+- 当前状态：
+  - 已在 canonical 条目 `okfile-2` 上正式创建 `1.2.3`
+  - 当前公开页已显示 `v1.2.3`
+  - 当前公开页已包含 `Python CLI` 段落以及 `okfile==1.2.3`、wheel 安装和常用命令示例
+  - 当前公开页仍可见 Claude Code / Codex CLI 平台安装信息
+- 备注：
+  - 这次沿用 `New Version` 流程更新旧条目，没有继续依赖此前额外生成的 slug
+  - 技能正文已经同步 `allowed-tools: WebFetch`、静态站点行为说明和 Python CLI `1.2.3`
+
+### SkillHub 三次更新
+
+- 平台：`skillhub.cn`
+- 提交日期：`2026-06-18`
+- 提交账号：`user_68ec2dc0`
+- 提交入口：`https://skillhub.cn/dashboard`
+- 使用文档：`SKILL.skillhub.club.md`
+- 打包文件：`.publish/skillhub/okfile-skillhub.zip`
+- 当前状态：
+  - 已提交 `1.2.3`
+  - 后台“我的 Skills”显示：`安全审核中`
+- 备注：
+  - 打包目录 `.publish/skillhub/okfile/SKILL.md` 已同步到 `1.2.3`
+  - 本次 zip 产物已重建并重新上传
+
 ### The Skills Directory
 
 - 平台：`theskills.directory`
-- 提交日期：`2026-06-05`
+- 提交日期：`2026-06-18`
 - 提交账号：`okfilecom`
 - 提交入口：`https://theskills.directory/submit`
 - 目标仓库：`https://github.com/okfilecom/okfile`
@@ -125,19 +160,60 @@
   - 提交请求已实际发出到站点后端接口
   - 后端最终返回通用错误：`Submission failed. Please try again.`
 - 已确认的信息：
-  - 第一次失败是空字段提交，接口返回 `400`，提示 `Title, description and skill content are required.`
-  - 修正字段并再次提交后，请求体已完整，但接口仍返回 `500`
+  - 第一次提交 payload 中，`author_name`、`github_repo_url`、`install_command` 为空
+  - 第二次重试已补齐 `author_name=okfilecom`、`github_repo_url=https://github.com/okfilecom/okfile`、`install_command=py -3 -m pip install okfile==1.2.3`
+  - 第二次重试 payload 里 `agent_ids`、`category_id`、完整 `skill_content` 和 `how_to_use` 也都已存在
+  - 即使在完整 payload 下，后端请求 `POST https://theskills.directory/api/submit` 仍返回 `500`
   - 当前更像站点服务端问题，不是前端必填校验问题
 - 备注：
   - 站点公开页面已明确提供 `submit` 入口，说明该平台确实支持自助提交
-  - 目前按你的要求，暂时不再继续向该网站提交
+  - 当前已经做过至少两次实际提交通路验证，问题稳定复现
   - 后续可再次重试，或将本次接口失败情况作为证据反馈给平台维护者
+
+### skills.sh
+
+- 平台：`skills.sh`
+- 处理日期：`2026-06-18`
+- 目标仓库：`https://github.com/okfilecom/okfile`
+- 初始化命令：`npx skills init okfile`
+- 安装命令：`npx skills add okfilecom/okfile`
+- 相关文件：
+  - 根技能文档：`SKILL.md`
+  - 初始化目录：`okfile/SKILL.md`
+- 当前状态：
+  - 已实际执行 `npx skills init okfile`，生成 `okfile/SKILL.md`
+  - 已将根 `SKILL.md` 的 description 调整为更适合 Agent Skills 触发的格式
+  - 已补齐 `okfile/SKILL.md`，可作为独立分发的 Skill 入口
+  - 本地验证 `npx skills add . --list` 可识别出 `okfile`
+- 备注：
+  - 当前仓库根目录本身已带 `SKILL.md`，因此直接 `npx skills add okfilecom/okfile` 即可被识别
+  - `okfile/SKILL.md` 是按 `skills init` 生成并完善的单 Skill 目录，便于后续扩展或单文件分发
+
+### npm
+
+- 平台：`npm`
+- 提交日期：`2026-06-18`
+- 提交账号：`okfilecom`
+- 提交入口：`https://www.npmjs.com/settings/okfilecom/tokens`
+- 包名：`@okfilecom/okfile`
+- 包链接：`https://www.npmjs.com/package/@okfilecom/okfile`
+- 使用目录：`npm/okfile/`
+- 当前状态：
+  - 已成功发布 `1.2.3`
+  - registry 查询返回 `version=1.2.3` 且 `dist-tags.latest=1.2.3`
+- 备注：
+  - 裸包名 `okfile` 被 npm 拒绝，原因是与现有包 `ok-file` 名称过近
+  - 已按 npm 官方提示改为作用域包 `@okfilecom/okfile`
+  - 该 npm 包是一个 Node launcher，会自动引导安装并调用已发布的 Python CLI `okfile==1.2.3`
+  - 用于本次发布的临时 npm token 已在发布完成后删除
 
 ## 本地文件状态
 
 - `SKILL.md` 已清理开头异常 BOM，避免部分平台 frontmatter 解析异常
-- 当前本地主技能文档与 3 份平台专用文档已统一到 `1.0.3`
-- `.publish/skillhub/okfile/SKILL.md` 也已同步到 `1.0.3`
+- 当前本地主技能文档与 3 份平台专用文档已统一到 `1.2.3`
+- `.publish/skillhub/okfile/SKILL.md` 也已同步到 `1.2.3`
+- npm launcher 包目录 `npm/okfile/` 已同步到 `1.2.3`
+- `okfile/SKILL.md` 已补齐为可独立分发的 Agent Skill 入口
 - 平台专用 skill 文档目前仍为：
   - `SKILL.skillhub.club.md`
   - `SKILL.skills-hub.md`

@@ -20,7 +20,7 @@ okfile --version
 Install a pinned version when you need reproducible environments:
 
 ```bash
-py -3 -m pip install okfile==1.2.2
+py -3 -m pip install okfile==1.2.3
 ```
 
 Upgrade to the latest release:
@@ -32,11 +32,40 @@ py -3 -m pip install --upgrade okfile
 Fallback wheel install:
 
 ```bash
-py -3 -m pip install "https://www.okfile.com/downloads/okfile-1.2.2-py3-none-any.whl"
+py -3 -m pip install "https://www.okfile.com/downloads/okfile-1.2.3-py3-none-any.whl"
 ```
 
 - PyPI: `https://pypi.org/project/okfile/`
 - CLI skill doc: `./SKILL.md`
+
+## npm Launcher
+
+The published npm package name is `@okfilecom/okfile`.
+
+Use it when you want a Node-friendly entrypoint that bootstraps the published Python CLI automatically:
+
+```bash
+npx @okfilecom/okfile --version
+npx @okfilecom/okfile upload ./photo.jpg
+```
+
+- npm: `https://www.npmjs.com/package/@okfilecom/okfile`
+
+## Agent Skill
+
+OkFile is also packaged as an Agent Skill that can be discovered through the open `skills.sh` ecosystem.
+
+Install it from the GitHub repository:
+
+```bash
+npx skills add okfilecom/okfile
+```
+
+Relevant skill sources in this repository:
+
+- root skill document: `./SKILL.md`
+- standalone initialized skill entry: `./okfile/SKILL.md`
+- Trae-local skill mirror: `./.trae/skills/okfile/SKILL.md`
 
 ## What It Does
 
@@ -161,6 +190,7 @@ This path is kept as a fallback entry, while API integration remains the recomme
 |- schema.sql                         # D1 schema
 |- wrangler.toml                      # Cloudflare config
 |- SKILL.md                           # root skill document
+|- okfile/SKILL.md                    # standalone skills.sh-compatible skill entry
 |- .trae/skills/okfile/SKILL.md       # Trae skill definition
 |- okfile-upload-pitfalls.md          # upload pitfalls and debugging notes
 ```
