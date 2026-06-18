@@ -13,6 +13,15 @@ const SESSION_COOKIE = 'okfile_session';
 const R2_STANDARD_STORAGE_PRICE_PER_GB_MONTH = 0.015;
 const R2_STANDARD_STORAGE_FREE_GB = 10;
 const R2_LIST_PAGE_LIMIT = 1000;
+const VIP_FILE_SIZE_LIMITS = {
+  0: 500 * 1024 * 1024,
+  1: 5 * 1024 * 1024 * 1024,
+  2: 50 * 1024 * 1024 * 1024,
+  3: 500 * 1024 * 1024 * 1024,
+  4: 1024 * 1024 * 1024 * 1024
+};
+
+let vipLevelSchemaEnsured = false;
 
 function json(data, status = 200, extraHeaders = {}) {
   return new Response(JSON.stringify(data), {
@@ -111,10 +120,35 @@ function escapeHtml(value = '') {
 
 function formatSize(size) {
   if (!Number.isFinite(size) || size < 0) return 'Unknown';
+  if (size >= 1024 * 1024 * 1024 * 1024) return `${(size / 1024 / 1024 / 1024 / 1024).toFixed(2)} TB`;
   if (size >= 1024 * 1024 * 1024) return `${(size / 1024 / 1024 / 1024).toFixed(2)} GB`;
   if (size >= 1024 * 1024) return `${(size / 1024 / 1024).toFixed(1)} MB`;
   if (size >= 1024) return `${(size / 1024).toFixed(0)} KB`;
   return `${size} B`;
+}
+
+function normalizeVipLevel(value) {
+  const level = Number(value);
+  if (!Number.isInteger(level)) return 0;
+  return Math.max(0, Math.min(level, 4));
+}
+
+function vipLabel(level) {
+  const normalized = normalizeVipLevel(level);
+  return normalized > 0 ? `VIP-${normalized}` : 'Standard';
+}
+
+function maxFileSizeForVipLevel(level) {
+  const normalized = normalizeVipLevel(level);
+  return VIP_FILE_SIZE_LIMITS[normalized] || VIP_FILE_SIZE_LIMITS[0];
+}
+
+async function ensureVipLevelColumn(env) {
+  if (vipLevelSchemaEnsured) return;
+  try {
+    await env.DB.prepare('ALTER TABLE users ADD COLUMN vip_level INTEGER NOT NULL DEFAULT 0').run();
+  } catch {}
+  vipLevelSchemaEnsured = true;
 }
 
 function toGb(size) {
@@ -1117,10 +1151,12 @@ async function auditUntrackedBucketObjects(env, options = {}) {
 }
 
 async function getUserByEmail(email, env) {
+  await ensureVipLevelColumn(env);
   return env.DB.prepare('SELECT * FROM users WHERE email = ?').bind(normalizeEmail(email)).first();
 }
 
 async function getUserById(id, env) {
+  await ensureVipLevelColumn(env);
   return env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(id).first();
 }
 
@@ -1210,6 +1246,7 @@ async function createSession(userId, env) {
 }
 
 async function getSessionFromRequest(request, env) {
+  await ensureVipLevelColumn(env);
   const token = parseCookies(request)[SESSION_COOKIE];
   if (!token) return null;
   const sessionHash = await sha256Hex(token);
@@ -1226,6 +1263,7 @@ async function getSessionFromRequest(request, env) {
     sessionId: record.session_id,
     userId: record.id,
     email: record.email,
+    vipLevel: normalizeVipLevel(record.vip_level),
     isAdmin: adminEmailSet(env).has(normalizeEmail(record.email))
   };
 }
@@ -1862,6 +1900,7 @@ function displayOrigin(value){
 }
 function formatSize(size){
   if(!Number.isFinite(size) || size < 0) return 'Unknown';
+  if(size >= 1024 * 1024 * 1024 * 1024) return (size / 1024 / 1024 / 1024 / 1024).toFixed(2) + ' TB';
   if(size >= 1024 * 1024 * 1024) return (size / 1024 / 1024 / 1024).toFixed(2) + ' GB';
   if(size >= 1024 * 1024) return (size / 1024 / 1024).toFixed(1) + ' MB';
   if(size >= 1024) return Math.round(size / 1024) + ' KB';
@@ -2033,6 +2072,7 @@ function userRow(item){
   return '<tr>' +
     '<td>' + renderUserCell(item.email, item.id) + '</td>' +
     '<td><div class="cell-stack"><div>' + esc(formatTime(item.createdAt)) + '</div><div class="subtle">Registered account</div></div></td>' +
+    '<td><div class="cell-stack"><strong>' + esc(item.vipLabel || 'Standard') + '</strong><div class="subtle">' + esc(formatSize(Number(item.maxFileSize || 0))) + ' per file</div></div></td>' +
     '<td>' + esc(formatNumber(item.apiKeyCount)) + '<div class="subtle">active ' + esc(formatNumber(item.activeApiKeyCount)) + '</div></td>' +
     '<td>' + esc(formatNumber(item.uploadedCountTotal)) + '</td>' +
     '<td><div class="cell-stack"><strong>' + esc(formatSize(totalStorageBytes)) + '</strong><div class="subtle">files ' + esc(formatSize(Number(item.fileBytes || 0))) + ' + sites ' + esc(formatSize(Number(item.siteBytes || 0))) + '</div></div></td>' +
@@ -2044,8 +2084,8 @@ async function loadUsersTable(){
   const data = await api('/api/admin/users');
   if(!$('usersTableWrap')) return data.users || [];
   const items = data.users || [];
-  $('usersTableWrap').innerHTML = '<table><thead><tr><th>User</th><th>Registered</th><th>API Keys</th><th>Total Uploads</th><th>Storage</th><th>Sites</th></tr></thead><tbody>' +
-    (items.length ? items.map(userRow).join('') : '<tr><td colspan="6" class="muted">No users were found.</td></tr>') +
+  $('usersTableWrap').innerHTML = '<table><thead><tr><th>User</th><th>Registered</th><th>VIP</th><th>API Keys</th><th>Total Uploads</th><th>Storage</th><th>Sites</th></tr></thead><tbody>' +
+    (items.length ? items.map(userRow).join('') : '<tr><td colspan="7" class="muted">No users were found.</td></tr>') +
     '</tbody></table>';
   return items;
 }
@@ -2606,17 +2646,63 @@ async function loadUserDetailPage(){
     '<div class="site-detail"><h3>Account</h3><div class="site-detail-grid">' +
       metricCard('Email', user.email || '-', '') +
       metricCard('User ID', user.id || '-', '') +
+      metricCard('VIP Level', user.vipLabel || 'Standard', 'Current single-file upload tier') +
+      metricCard('Single File Limit', formatSize(Number(user.maxFileSize || 0)), 'Applies to direct uploads and prepare requests') +
       metricCard('Registered', formatTime(user.createdAt), 'Account creation time') +
       metricCard('Verified', formatTime(user.verifiedAt), 'First verified sign-in') +
       metricCard('Last Login', formatTime(user.lastLoginAt), 'Latest recorded session activity') +
       metricCard('Stored Files', formatNumber(summary.fileCount || 0), formatSize(Number(summary.fileBytes || 0))) +
       metricCard('Published Sites', formatNumber(summary.siteCount || 0), formatSize(Number(summary.siteBytes || 0))) +
       metricCard('Combined Storage', formatSize(totalStorageBytes), 'Files plus sites for this account') +
+    '</div>' +
+    '<div class="field"><label for="userVipLevel">VIP Level</label><select id="userVipLevel">' +
+      '<option value="0"' + (Number(user.vipLevel || 0) === 0 ? ' selected' : '') + '>Standard</option>' +
+      '<option value="1"' + (Number(user.vipLevel || 0) === 1 ? ' selected' : '') + '>VIP-1</option>' +
+      '<option value="2"' + (Number(user.vipLevel || 0) === 2 ? ' selected' : '') + '>VIP-2</option>' +
+      '<option value="3"' + (Number(user.vipLevel || 0) === 3 ? ' selected' : '') + '>VIP-3</option>' +
+      '<option value="4"' + (Number(user.vipLevel || 0) === 4 ? ' selected' : '') + '>VIP-4</option>' +
+    '</select></div>' +
+    '<div class="action-row"><button class="btn-primary" type="button" id="saveVipBtn">Save VIP Level</button><div class="note" id="userVipHint">Current limit: ' + esc(formatSize(Number(user.maxFileSize || 0))) + ' per file.</div></div>' +
     '</div></div>' +
     '<div class="site-detail"><h3>API Keys</h3><div class="table-wrap"><table><thead><tr><th>Key</th><th>Status</th><th>Created</th><th>Uploaded</th></tr></thead><tbody>' + (keyRows || '<tr><td colspan="4" class="muted">No API Keys were found for this user.</td></tr>') + '</tbody></table></div></div>' +
     '<div class="site-detail"><h3>Files</h3><div class="table-wrap"><table><thead><tr><th>File</th><th>Type</th><th>Size</th><th>Created / Source</th><th>Actions</th></tr></thead><tbody>' + (fileRows || '<tr><td colspan="5" class="muted">No uploaded files were found for this user.</td></tr>') + '</tbody></table></div></div>' +
     '<div class="site-detail"><h3>Sites</h3><div class="table-wrap"><table><thead><tr><th>Site</th><th>Status</th><th>Files / Size</th><th>Created</th><th>Actions</th></tr></thead><tbody>' + (siteRows || '<tr><td colspan="5" class="muted">No published sites were found for this user.</td></tr>') + '</tbody></table></div></div>' +
   '</div>';
+  const saveVipBtn = $('saveVipBtn');
+  const userVipLevel = $('userVipLevel');
+  const userVipHint = $('userVipHint');
+  if(saveVipBtn && userVipLevel){
+    userVipLevel.onchange = () => {
+      const labels = {
+        '0': '500 MB per file',
+        '1': '5.00 GB per file',
+        '2': '50.00 GB per file',
+        '3': '500.00 GB per file',
+        '4': '1.00 TB per file'
+      };
+      if(userVipHint) userVipHint.textContent = 'Selected limit: ' + (labels[userVipLevel.value] || labels['0']);
+    };
+    saveVipBtn.onclick = async () => {
+      hide($('adminErr'));
+      hide($('adminMsg'));
+      saveVipBtn.disabled = true;
+      saveVipBtn.textContent = 'Saving...';
+      try{
+        await api('/api/admin/users/' + encodeURIComponent(userId),{
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({vipLevel:Number(userVipLevel.value || 0)})
+        });
+        show($('adminMsg'),'VIP level updated');
+        await loadUserDetailPage();
+      }catch(error){
+        show($('adminErr'),error.message);
+      }finally{
+        saveVipBtn.disabled = false;
+        saveVipBtn.textContent = 'Save VIP Level';
+      }
+    };
+  }
   return data;
 }
 function setCleanupBusy(busy){
@@ -2934,11 +3020,13 @@ async function handleAdminUsers(request, env) {
   const session = await getSessionFromRequest(request, env);
   if (!session) return json({ error: 'Please sign in first' }, 401);
   if (!session.isAdmin) return json({ error: 'You do not have admin access' }, 403);
+  await ensureVipLevelColumn(env);
   await ensureSitesTables(env);
   const result = await env.DB.prepare(
     `SELECT
         users.id AS user_id,
         users.email,
+        users.vip_level,
         users.created_at AS user_created_at,
         (SELECT COUNT(*) FROM api_keys WHERE api_keys.user_id = users.id) AS api_key_count,
         (SELECT COUNT(*) FROM api_keys WHERE api_keys.user_id = users.id AND api_keys.status = 'active') AS active_api_key_count,
@@ -2954,6 +3042,9 @@ async function handleAdminUsers(request, env) {
     users: (result.results || []).map((item) => ({
       id: item.user_id,
       email: item.email,
+      vipLevel: normalizeVipLevel(item.vip_level),
+      vipLabel: vipLabel(item.vip_level),
+      maxFileSize: maxFileSizeForVipLevel(item.vip_level),
       createdAt: item.user_created_at || null,
       apiKeyCount: Number(item.api_key_count || 0),
       activeApiKeyCount: Number(item.active_api_key_count || 0),
@@ -3232,10 +3323,11 @@ async function handleAdminUserDetail(request, userId, env) {
   const session = await getSessionFromRequest(request, env);
   if (!session) return json({ error: 'Please sign in first' }, 401);
   if (!session.isAdmin) return json({ error: 'You do not have admin access' }, 403);
+  await ensureVipLevelColumn(env);
   await ensurePublishedFilesTable(env);
   await ensureSitesTables(env);
   const user = await env.DB.prepare(
-    `SELECT id, email, created_at, verified_at, last_login_at
+    `SELECT id, email, vip_level, created_at, verified_at, last_login_at
      FROM users
      WHERE id = ?`
   ).bind(userId).first();
@@ -3276,6 +3368,9 @@ async function handleAdminUserDetail(request, userId, env) {
     user: {
       id: user.id,
       email: user.email,
+      vipLevel: normalizeVipLevel(user.vip_level),
+      vipLabel: vipLabel(user.vip_level),
+      maxFileSize: maxFileSizeForVipLevel(user.vip_level),
       createdAt: user.created_at || null,
       verifiedAt: user.verified_at || null,
       lastLoginAt: user.last_login_at || null
@@ -3320,6 +3415,29 @@ async function handleAdminUserDetail(request, userId, env) {
       expiresAt: item.expires_at || null,
       createdAt: item.created_at || null
     }))
+  });
+}
+
+async function handleAdminUpdateUser(request, userId, env) {
+  const session = await getSessionFromRequest(request, env);
+  if (!session) return json({ error: 'Please sign in first' }, 401);
+  if (!session.isAdmin) return json({ error: 'You do not have admin access' }, 403);
+  await ensureVipLevelColumn(env);
+  let body;
+  try {
+    body = await request.json();
+  } catch (error) {
+    return json({ error: `Request body must be JSON: ${error.message}` }, 400);
+  }
+  const vipLevel = normalizeVipLevel(body?.vipLevel);
+  const result = await env.DB.prepare('UPDATE users SET vip_level = ? WHERE id = ?').bind(vipLevel, userId).run();
+  if (!result.meta?.changes) return json({ error: 'User not found' }, 404);
+  return json({
+    success: true,
+    vipLevel,
+    vipLabel: vipLabel(vipLevel),
+    maxFileSize: maxFileSizeForVipLevel(vipLevel),
+    maxFileSizeLabel: formatSize(maxFileSizeForVipLevel(vipLevel))
   });
 }
 
@@ -3864,6 +3982,9 @@ export default {
     const adminUserDetailMatch = url.pathname.match(/^\/api\/admin\/users\/([^/]+)$/);
     if (adminUserDetailMatch && request.method === 'GET') {
       return handleAdminUserDetail(request, decodeURIComponent(adminUserDetailMatch[1]), env);
+    }
+    if (adminUserDetailMatch && request.method === 'POST') {
+      return handleAdminUpdateUser(request, decodeURIComponent(adminUserDetailMatch[1]), env);
     }
     const adminSiteUpdateLinkMatch = url.pathname.match(/^\/api\/admin\/sites\/([^/]+)\/update-link$/);
     if (adminSiteUpdateLinkMatch && request.method === 'POST') {

@@ -185,6 +185,7 @@
     </span>
   </label>
   <div class="settings-mode-note" id="settingsModeNote">This option is available for single-file uploads. Site publishing keeps its existing behavior.</div>
+  <div class="settings-mode-note" id="uploadLimitNote">Current account: Standard. Max single file: 500 MB.</div>
 </div>
 
 <!-- Actions -->
@@ -271,6 +272,8 @@ let siteResult = null;
 let siteUploadMeta = null;
 let uploadConfig = {
   maxSize: 500 * 1024 * 1024,
+  maxSizeLabel: '500 MB',
+  vipLabel: 'Standard',
   quickUploadMaxSize: 5 * 1024 * 1024,
   multipartThreshold: 25 * 1024 * 1024,
   partSize: 10 * 1024 * 1024,
@@ -312,6 +315,7 @@ const uploadSettings = $('uploadSettings');
 const burnAfterReadToggle = $('burnAfterReadToggle');
 const burnAfterReadHelp = $('burnAfterReadHelp');
 const settingsModeNote = $('settingsModeNote');
+const uploadLimitNote = $('uploadLimitNote');
 const pageParams = new URLSearchParams(location.search);
 const siteUpdateTargetId = /^st_[a-z0-9]+$/i.test(String(pageParams.get('siteId') || '').trim())
   ? String(pageParams.get('siteId') || '').trim()
@@ -346,6 +350,11 @@ function syncUploadSettings() {
   }
   if (uploadSettings) {
     uploadSettings.classList.toggle('is-disabled', isSiteMode);
+  }
+  if (uploadLimitNote) {
+    const vipLabel = uploadConfig?.vipLabel || 'Standard';
+    const maxLabel = uploadConfig?.maxSizeLabel || fmtSize(uploadConfig?.maxSize || MAX_SIZE);
+    uploadLimitNote.textContent = `Current account: ${vipLabel}. Max single file: ${maxLabel}.`;
   }
 }
 
@@ -585,8 +594,9 @@ async function loadUploadConfig() {
     if (!res.ok || !(data && data.success)) return;
     uploadConfig = data;
     MAX_SIZE = data.maxSize || MAX_SIZE;
-    const maxLabel = `${Math.round(MAX_SIZE / 1024 / 1024)}MB`;
+    const maxLabel = data.maxSizeLabel || fmtSize(MAX_SIZE);
     document.querySelectorAll('.max-size-label').forEach(el => el.textContent = maxLabel);
+    syncUploadSettings();
   } catch (_) {}
 }
 
@@ -1051,6 +1061,7 @@ function showToast(m) { ts.textContent=m; ts.classList.add('show'); setTimeout((
 function escHTML(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 
 function fmtSize(b) {
+  if (b >= 1099511627776) return (b/1099511627776).toFixed(2)+' TB';
   if (b >= 1073741824) return (b/1073741824).toFixed(2)+' GB';
   if (b >= 1048576) return (b/1048576).toFixed(2)+' MB';
   if (b >= 1024) return (b/1024).toFixed(1)+' KB';

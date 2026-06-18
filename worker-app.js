@@ -3,6 +3,10 @@ import { AwsClient } from 'aws4fetch';
 const MAX_SIZE = 500 * 1024 * 1024;
 const MULTIPART_THRESHOLD = 25 * 1024 * 1024;
 const PART_SIZE = 10 * 1024 * 1024;
+const MIN_MULTIPART_PART_SIZE = 5 * 1024 * 1024;
+const MAX_MULTIPART_PART_SIZE = 5 * 1024 * 1024 * 1024;
+const MAX_MULTIPART_PARTS = 10000;
+const PART_SIZE_ROUNDING = 1024 * 1024;
 const QUICK_UPLOAD_MAX_SIZE = 5 * 1024 * 1024;
 const DEFAULT_CACHE = 'public, max-age=31536000, immutable';
 const PRESIGNED_EXPIRES = 3600;
@@ -16,7 +20,7 @@ const DEFAULT_API_KEY_WINDOW_SEC = 3600;
 const DEFAULT_API_KEY_UPLOAD_LIMIT = 1000;
 const STATIC_PAGE_BROWSER_TTL = 300;
 const STATIC_PAGE_EDGE_TTL = 3600;
-const STATIC_PAGE_CACHE_VERSION = 'v29';
+const STATIC_PAGE_CACHE_VERSION = 'v31';
 const UPLOAD_NOTIFY_TO_EMAIL = 'sungz@163.com';
 const UPLOAD_NOTIFY_DAILY_LIMIT = 10;
 const UPLOAD_NOTIFY_SUBJECT_PREFIX = 'OkFile New Upload';
@@ -36,6 +40,13 @@ const SITE_MAX_FILES = 300;
 const SITE_MAX_TOTAL_SIZE = 1024 * 1024 * 1024;
 const SITE_SUBDOMAIN_PREFIX = '';
 const RESERVED_SITE_SUBDOMAINS = new Set(['www', 'admin', 'api', 'send', 'smtp', 'imap', 'pop', 'mail', 'autodiscover']);
+const VIP_FILE_SIZE_LIMITS = {
+  0: MAX_SIZE,
+  1: 5 * 1024 * 1024 * 1024,
+  2: 50 * 1024 * 1024 * 1024,
+  3: 500 * 1024 * 1024 * 1024,
+  4: 1024 * 1024 * 1024 * 1024
+};
 
 const prepareRateBuckets = new Map();
 
@@ -532,10 +543,70 @@ function escapeHtml(value = '') {
 
 function formatSize(size) {
   if (!Number.isFinite(size) || size < 0) return 'Unknown';
+  if (size >= 1024 * 1024 * 1024 * 1024) return `${(size / 1024 / 1024 / 1024 / 1024).toFixed(2)} TB`;
   if (size >= 1024 * 1024 * 1024) return `${(size / 1024 / 1024 / 1024).toFixed(2)} GB`;
   if (size >= 1024 * 1024) return `${(size / 1024 / 1024).toFixed(1)} MB`;
   if (size >= 1024) return `${(size / 1024).toFixed(0)} KB`;
   return `${size} B`;
+}
+
+function normalizeVipLevel(value) {
+  const level = Number(value);
+  if (!Number.isInteger(level)) return 0;
+  return Math.max(0, Math.min(level, 4));
+}
+
+function vipLabel(level) {
+  const normalized = normalizeVipLevel(level);
+  return normalized > 0 ? `VIP-${normalized}` : 'Standard';
+}
+
+function maxFileSizeForVipLevel(level) {
+  const normalized = normalizeVipLevel(level);
+  return VIP_FILE_SIZE_LIMITS[normalized] || MAX_SIZE;
+}
+
+function roundUpTo(value, step) {
+  if (!Number.isFinite(value) || value <= 0) return step;
+  return Math.ceil(value / step) * step;
+}
+
+function buildUploadPolicy(actor) {
+  const level = normalizeVipLevel(actor?.vipLevel ?? actor?.vip_level);
+  const maxFileSize = maxFileSizeForVipLevel(level);
+  return {
+    vipLevel: level,
+    vipLabel: vipLabel(level),
+    maxFileSize,
+    maxFileSizeLabel: formatSize(maxFileSize),
+    multipart: {
+      threshold: MULTIPART_THRESHOLD,
+      defaultPartSize: PART_SIZE,
+      minPartSize: MIN_MULTIPART_PART_SIZE,
+      maxPartSize: MAX_MULTIPART_PART_SIZE,
+      maxParts: MAX_MULTIPART_PARTS
+    }
+  };
+}
+
+function resolveMultipartPartSize(fileSize, preferredPartSize = 0) {
+  const minimumSafeSize = Math.max(
+    MIN_MULTIPART_PART_SIZE,
+    Math.ceil(Number(fileSize || 0) / MAX_MULTIPART_PARTS)
+  );
+  const recommendedPartSize = Math.min(
+    MAX_MULTIPART_PART_SIZE,
+    Math.max(PART_SIZE, roundUpTo(minimumSafeSize, PART_SIZE_ROUNDING))
+  );
+  const normalizedPreferred = Number(preferredPartSize || 0);
+  if (
+    Number.isFinite(normalizedPreferred) &&
+    normalizedPreferred >= MIN_MULTIPART_PART_SIZE &&
+    normalizedPreferred <= MAX_MULTIPART_PART_SIZE
+  ) {
+    return Math.max(recommendedPartSize, Math.floor(normalizedPreferred));
+  }
+  return recommendedPartSize;
 }
 
 function mediaUrl(id) {
@@ -1067,6 +1138,7 @@ const ACCOUNT_PAGE_CONFIGS = {
 let accountIndexesEnsured = false;
 let publishedFilesTableEnsured = false;
 let sitesTablesEnsured = false;
+let vipLevelSchemaEnsured = false;
 
 function getAccountPageConfig(pageKey) {
   return ACCOUNT_PAGE_CONFIGS[pageKey] || ACCOUNT_PAGE_CONFIGS.overview;
@@ -1275,7 +1347,7 @@ function accountPage(lang = 'en', pageKey = 'overview', session = null, initialA
     navOverview: 'Overview',
     navOverviewDesc: 'High-level summary across profile, storage, files, sites, and keys',
     navProfile: 'Profile',
-    navProfileDesc: 'Email, account ID, verification, and access level',
+    navProfileDesc: 'Email, account ID, verification, VIP level, and upload limits',
     navStorage: 'Storage',
     navStorageDesc: 'Personal file and site storage totals',
     navFiles: 'Files',
@@ -1322,6 +1394,8 @@ function accountPage(lang = 'en', pageKey = 'overview', session = null, initialA
     fileStorage: 'File Storage',
     siteStorage: 'Site Storage',
     accountRole: 'Role',
+    vipLevelLabel: 'VIP Level',
+    uploadLimitLabel: 'Single File Limit',
     registeredAt: 'Registered',
     verifiedAt: 'Verified',
     lastLoginAt: 'Last Login',
@@ -1447,6 +1521,8 @@ const i18n=${JSON.stringify({
       fileStorage: copy.fileStorage,
       siteStorage: copy.siteStorage,
       accountRole: copy.accountRole,
+      vipLevelLabel: copy.vipLevelLabel,
+      uploadLimitLabel: copy.uploadLimitLabel,
       registeredAt: copy.registeredAt,
       verifiedAt: copy.verifiedAt,
       lastLoginAt: copy.lastLoginAt,
@@ -1573,6 +1649,8 @@ function renderProfile(me){
     metricCard('Email', escapeHtml(me.email || '-'), 'Primary sign-in address') +
     metricCard(i18n.userId, '<code>' + escapeHtml(me.userId || '-') + '</code>', 'Stable account identifier') +
     metricCard(i18n.accountRole, escapeHtml(me.isAdmin ? i18n.roleAdmin : i18n.roleUser), 'Derived from current account access') +
+    metricCard(i18n.vipLevelLabel, escapeHtml(me.vipLabel || 'Standard'), 'Administrator-assigned upload tier') +
+    metricCard(i18n.uploadLimitLabel, escapeHtml(me.uploadPolicy?.maxFileSizeLabel || '-'), 'Maximum original file size for one upload') +
     metricCard(i18n.registeredAt, escapeHtml(formatDate(me.createdAt)), escapeHtml(formatRelative(me.createdAt))) +
     metricCard(i18n.verifiedAt, escapeHtml(formatDate(me.verifiedAt)), me.verifiedAt ? 'Email verification completed' : 'Not verified yet') +
     metricCard(i18n.lastLoginAt, escapeHtml(formatDate(me.lastLoginAt)), escapeHtml(formatRelative(me.lastLoginAt)));
@@ -2587,10 +2665,12 @@ async function serveR2File(id, request, env, meta, options = {}) {
 }
 
 async function getUserByEmail(email, env) {
+  await ensureVipLevelColumn(env);
   return env.DB.prepare('SELECT * FROM users WHERE email = ?').bind(normalizeEmail(email)).first();
 }
 
 async function getUserById(id, env) {
+  await ensureVipLevelColumn(env);
   return env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(id).first();
 }
 
@@ -2681,6 +2761,7 @@ async function createSession(userId, env) {
 
 async function getSessionFromRequest(request, env) {
   await ensureAccountDataIndexes(env);
+  await ensureVipLevelColumn(env);
   const token = parseCookies(request)[SESSION_COOKIE];
   if (!token) return null;
   const sessionHash = await sha256Hex(token);
@@ -2704,6 +2785,7 @@ async function getSessionFromRequest(request, env) {
     verifiedAt: record.verified_at,
     createdAt: record.created_at,
     lastLoginAt: record.last_login_at,
+    vipLevel: normalizeVipLevel(record.vip_level),
     isAdmin: adminEmailSet(env).has(normalizeEmail(record.email))
   };
 }
@@ -2828,6 +2910,7 @@ function accountDetailForPage(pageKey) {
 }
 
 async function buildAccountPayload(session, detail, env) {
+  const uploadPolicy = buildUploadPolicy(session);
   const payload = {
     success: true,
     userId: session.userId,
@@ -2835,7 +2918,10 @@ async function buildAccountPayload(session, detail, env) {
     createdAt: session.createdAt,
     verifiedAt: session.verifiedAt,
     lastLoginAt: session.lastLoginAt,
-    isAdmin: session.isAdmin
+    isAdmin: session.isAdmin,
+    vipLevel: uploadPolicy.vipLevel,
+    vipLabel: uploadPolicy.vipLabel,
+    uploadPolicy
   };
   if (detail === 'full' || detail === 'summary') {
     payload.summary = await getAccountSummary(session.userId, env);
@@ -2930,9 +3016,10 @@ async function createApiKey(userId, name, env) {
 }
 
 async function getApiKeyByRaw(rawKey, env) {
+  await ensureVipLevelColumn(env);
   const keyHash = await sha256Hex(rawKey);
   const record = await env.DB.prepare(
-    `SELECT api_keys.*, users.email
+    `SELECT api_keys.*, users.email, users.vip_level
      FROM api_keys
      JOIN users ON users.id = api_keys.user_id
      WHERE api_keys.key_hash = ?`
@@ -2945,6 +3032,7 @@ async function getApiKeyByRaw(rawKey, env) {
     name: record.name,
     keyPrefix: record.key_prefix,
     status: record.status,
+    vipLevel: normalizeVipLevel(record.vip_level),
     limitPreparePerWindow: record.limit_prepare_per_window,
     limitPrepareWindowSec: record.limit_prepare_window_sec,
     limitUploadCountTotal: record.limit_upload_count_total,
@@ -3181,16 +3269,24 @@ function isMetaExpired(meta) {
   return isExpiredAt(meta?.expiresAt);
 }
 
-function buildPrepareLimits(apiKey, actualPartSize, maxDownloads, burnAfterRead = false) {
+function buildPrepareLimits(apiKey, actualPartSize, maxDownloads, burnAfterRead = false, uploadPolicy = buildUploadPolicy()) {
   const normalizedMaxDownloads = Number.isInteger(maxDownloads) && maxDownloads > 0 ? maxDownloads : null;
   const limits = {
-    maxFileSize: MAX_SIZE,
+    maxFileSize: uploadPolicy.maxFileSize,
+    maxFileSizeLabel: uploadPolicy.maxFileSizeLabel,
+    vipLevel: uploadPolicy.vipLevel,
+    vipLabel: uploadPolicy.vipLabel,
     multipartThreshold: MULTIPART_THRESHOLD,
     defaultPartSize: PART_SIZE,
     effectivePartSize: actualPartSize,
     preferredPartSize: {
-      min: 5 * 1024 * 1024,
-      max: 100 * 1024 * 1024
+      min: MIN_MULTIPART_PART_SIZE,
+      max: MAX_MULTIPART_PART_SIZE
+    },
+    multipart: {
+      maxParts: MAX_MULTIPART_PARTS,
+      minPartSize: MIN_MULTIPART_PART_SIZE,
+      maxPartSize: MAX_MULTIPART_PART_SIZE
     },
     download: {
       enabled: normalizedMaxDownloads !== null,
@@ -3279,6 +3375,7 @@ async function ensureAppSettingsTable(env) {
 
 async function ensureAccountDataIndexes(env) {
   if (accountIndexesEnsured) return;
+  await ensureVipLevelColumn(env);
   for (const statement of [
     'CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email)',
     'CREATE INDEX IF NOT EXISTS idx_magic_links_token_hash ON magic_links(token_hash)',
@@ -3294,6 +3391,14 @@ async function ensureAccountDataIndexes(env) {
     } catch {}
   }
   accountIndexesEnsured = true;
+}
+
+async function ensureVipLevelColumn(env) {
+  if (vipLevelSchemaEnsured) return;
+  try {
+    await env.DB.prepare('ALTER TABLE users ADD COLUMN vip_level INTEGER NOT NULL DEFAULT 0').run();
+  } catch {}
+  vipLevelSchemaEnsured = true;
 }
 
 async function ensurePublishedFilesTable(env) {
@@ -4837,18 +4942,37 @@ async function runScheduledCleanup(env) {
   return result;
 }
 
-async function handleUploadConfig(env) {
+async function handleUploadConfig(request, env) {
+  const rawApiKey = getRequestApiKey(request);
+  let actor = null;
+  if (rawApiKey) {
+    actor = await getApiKeyByRaw(rawApiKey, env);
+  } else {
+    actor = await getSessionFromRequest(request, env);
+  }
+  const uploadPolicy = buildUploadPolicy(actor);
   return json({
     success: true,
-    maxSize: MAX_SIZE,
-    maxSizeMb: Math.round(MAX_SIZE / 1024 / 1024),
+    vipLevel: uploadPolicy.vipLevel,
+    vipLabel: uploadPolicy.vipLabel,
+    maxSize: uploadPolicy.maxFileSize,
+    maxSizeMb: Math.round(uploadPolicy.maxFileSize / 1024 / 1024),
+    maxSizeLabel: uploadPolicy.maxFileSizeLabel,
     quickUploadMaxSize: QUICK_UPLOAD_MAX_SIZE,
     quickUploadMaxSizeMb: Math.round(QUICK_UPLOAD_MAX_SIZE / 1024 / 1024),
     multipartThreshold: MULTIPART_THRESHOLD,
     multipartThresholdMb: Math.round(MULTIPART_THRESHOLD / 1024 / 1024),
     partSize: PART_SIZE,
     partSizeMb: Math.round(PART_SIZE / 1024 / 1024),
+    multipart: {
+      maxParts: MAX_MULTIPART_PARTS,
+      minPartSize: MIN_MULTIPART_PART_SIZE,
+      minPartSizeMb: Math.round(MIN_MULTIPART_PART_SIZE / 1024 / 1024),
+      maxPartSize: MAX_MULTIPART_PART_SIZE,
+      maxPartSizeMb: Math.round(MAX_MULTIPART_PART_SIZE / 1024 / 1024)
+    },
     presignedExpires: PRESIGNED_EXPIRES,
+    uploadPolicy,
     burnAfterRead: {
       supported: true,
       input: 'burnAfterRead'
@@ -4885,6 +5009,7 @@ async function handleSitePrepare(request, env) {
       return json({ error: `Too many site prepare requests. Retry in ${(prepareLimit.resetInMs / 1000).toFixed(0)} seconds` }, 429);
     }
   }
+  const uploadPolicy = buildUploadPolicy(apiKey || session);
 
   const requestedExpiresAt = normalizeExpiresAt(body?.expiresAt);
   if (Number.isNaN(requestedExpiresAt)) {
@@ -4915,8 +5040,8 @@ async function handleSitePrepare(request, env) {
     if (!Number.isFinite(size) || size < 1) {
       return json({ error: `Invalid file size: ${relativePath}` }, 400);
     }
-    if (size > MAX_SIZE) {
-      return json({ error: `File is too large: ${relativePath}. Maximum file size is ${(MAX_SIZE / 1024 / 1024).toFixed(0)}MB` }, 400);
+    if (size > uploadPolicy.maxFileSize) {
+      return json({ error: `File is too large: ${relativePath}. Maximum file size for ${uploadPolicy.vipLabel} is ${uploadPolicy.maxFileSizeLabel}` }, 400);
     }
     totalSize += size;
     rawPaths.push(relativePath);
@@ -5060,6 +5185,7 @@ async function handleUploadPrepare(request, env) {
       return json({ error: `Too many upload prepare requests. Retry in ${(prepareLimit.resetInMs / 1000).toFixed(0)} seconds` }, 429);
     }
   }
+  const uploadPolicy = buildUploadPolicy(apiKey || session);
 
   const filename = sanitizeFilename(body?.filename);
   const size = Number(body?.size || 0);
@@ -5084,14 +5210,12 @@ async function handleUploadPrepare(request, env) {
   if (typeof filename !== 'string') {
     return json({ error: 'filename is required and must not contain path separators or control characters' }, 400);
   }
-  let actualPartSize = PART_SIZE;
-  if (preferredPartSize >= 5 * 1024 * 1024 && preferredPartSize <= 100 * 1024 * 1024) {
-    actualPartSize = preferredPartSize;
-  }
-  
   const detectedType = contentTypeFromName(filename, body?.contentType);
   if (!size || size < 1) return json({ error: 'File is empty' }, 400);
-  if (size > MAX_SIZE) return json({ error: `File is too large. Maximum supported size is ${(MAX_SIZE / 1024 / 1024).toFixed(0)}MB` }, 400);
+  if (size > uploadPolicy.maxFileSize) {
+    return json({ error: `File is too large. Maximum supported size for ${uploadPolicy.vipLabel} is ${uploadPolicy.maxFileSizeLabel}` }, 400);
+  }
+  const actualPartSize = resolveMultipartPartSize(size, preferredPartSize);
 
   const id = generateId();
   const publishOrigin = await resolvePublishOrigin(request, env);
@@ -5122,7 +5246,7 @@ async function handleUploadPrepare(request, env) {
     burnAfterRead: Boolean(burnAfterRead),
     maxDownloads,
     expiresAt: effectiveExpiresAt,
-    limits: buildPrepareLimits(apiKey, actualPartSize, maxDownloads, Boolean(burnAfterRead)),
+    limits: buildPrepareLimits(apiKey, actualPartSize, maxDownloads, Boolean(burnAfterRead), uploadPolicy),
     integrity: {
       etag: {
         supported: true,
@@ -5152,6 +5276,9 @@ async function handleUploadPrepare(request, env) {
         }
       });
       const totalParts = Math.ceil(size / actualPartSize);
+      if (totalParts > MAX_MULTIPART_PARTS) {
+        return json({ error: `Multipart upload would require too many parts. Increase part size above ${formatSize(actualPartSize)} and retry.` }, 400);
+      }
       const parts = await createPartUploadUrls(id, multipart.uploadId, totalParts, env, signer);
       await saveUploadSession(id, {
         ...baseSession,
@@ -5837,7 +5964,7 @@ export default {
       return handleDeleteAccountSite(request, accountSiteMatch[1], env);
     }
 
-    if (url.pathname === '/api/upload/config' && request.method === 'GET') return handleUploadConfig(env);
+    if (url.pathname === '/api/upload/config' && request.method === 'GET') return handleUploadConfig(request, env);
     if (url.pathname === '/api/site/prepare' && request.method === 'POST') return handleSitePrepare(request, env);
     if (url.pathname === '/api/site/complete' && request.method === 'POST') return handleSiteComplete(request, env);
     if (url.pathname === '/api/upload/prepare' && request.method === 'POST') return handleUploadPrepare(request, env);
