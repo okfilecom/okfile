@@ -157,11 +157,13 @@ Request body:
   "size": 12345,
   "contentType": "image/jpeg",
   "preferredPartSize": 5242880,
+  "burnAfterRead": true,
   "apiKey": "okf_..."
 }
 ```
 Notes:
 - `preferredPartSize` is optional
+- `burnAfterRead` is optional and invalidates the file after the first successful preview or download
 - current supported range is `5MB` to `100MB`
 - response may be `single` or `multipart`
 - `expiresIn` refers to the signed `uploadUrl` or `parts[].uploadUrl` lifetime only; it does not describe a separate Worker-side upload-session TTL
@@ -201,7 +203,7 @@ Multipart response example:
 Request:
 - send `multipart/form-data`
 - include the file in the `file` field
-- optional fields such as `expiresAt` and `maxDownloads` follow the normal upload semantics
+- optional fields such as `expiresAt`, `maxDownloads`, and `burnAfterRead` follow the normal upload semantics
 Success response example:
 ```json
 {
@@ -210,6 +212,7 @@ Success response example:
   "url": "https://www.okfile.com/i/a3k7m92x",
   "downloadUrl": "https://www.okfile.com/d/a3k7m92x",
   "playUrl": "https://www.okfile.com/i/a3k7m92x?play=1",
+  "burnAfterRead": true,
   "type": "image"
 }
 ```

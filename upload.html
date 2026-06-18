@@ -1,69 +1,90 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>OkFile - 人工上载</title>
-<meta name="description" id="metaDesc" content="OkFile 人工上载页面，支持图片、视频、PDF、常见文件和整个静态站点目录。文件夹上载后可发布到独立子域名；对 Agent 而言，仍推荐优先使用 API 接入。">
+<title>OkFile - Manual Upload</title>
+<meta name="description" id="metaDesc" content="OkFile manual upload page for images, videos, PDFs, common files, and full static site folders. Small files use quick upload automatically, larger files switch to multipart, and API or Python CLI integration remains the recommended path for agents.">
 <meta name="robots" content="noindex,follow">
-<meta name="theme-color" content="#0a0a0a">
+<meta name="theme-color" content="#f5f7fb">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="shortcut icon" href="/favicon.ico">
 <style>
   *{margin:0;padding:0;box-sizing:border-box}
-  body{font-family:-apple-system,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;background:#0a0a0a;color:#e0e0e0;min-height:100vh;display:flex;flex-direction:column;align-items:center}
-  .header{width:100%;max-width:720px;padding:32px 24px 0;text-align:center}
-  .top-links{display:flex;justify-content:center;gap:10px;flex-wrap:wrap;margin-bottom:16px}
-  .top-links a{padding:8px 14px;border-radius:999px;border:1px solid #2b2b2b;color:#aaa;text-decoration:none;font-size:12px}
-  .top-links a:hover{border-color:#2563eb;color:#fff}
-  .header h1{font-size:28px;font-weight:700;color:#fff;margin-bottom:8px}.header h1 span{color:#2563eb}
-  .header p{font-size:14px;color:#666}
+  html{background:#f5f7fb}
+  body{font-family:Inter,ui-sans-serif,system-ui,-apple-system,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;background:linear-gradient(180deg,#f7f9fc 0%,#eef3f9 100%);color:#334155;min-height:100vh;display:flex;flex-direction:column;align-items:center}
+  .topbar{position:sticky;top:0;z-index:30;width:100%;background:rgba(247,249,252,.92);backdrop-filter:blur(14px);border-bottom:1px solid #dde6f0}
+  .topbar-inner{width:min(1120px,100%);margin:0 auto;padding:14px 24px;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
+  .brand{display:inline-flex;align-items:center;gap:10px;text-decoration:none}
+  .brand-logo{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:10px;background:linear-gradient(135deg,#f48120,#ffb347);color:#fff;font-weight:800;box-shadow:0 8px 18px rgba(244,129,32,.2)}
+  .brand-copy strong{display:block;font-size:16px;color:#0f172a}
+  .brand-copy span{display:block;font-size:12px;color:#64748b}
+  .top-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .top-actions a{padding:8px 14px;border-radius:999px;border:1px solid #dce4ee;background:#fff;color:#475569;text-decoration:none;font-size:12px;box-shadow:0 1px 2px rgba(15,23,42,.04)}
+  .top-actions a:hover{border-color:#c7d6ea;color:#0f172a;background:#f8fafc}
+  .top-actions a.primary{background:#1d4ed8;border-color:#1d4ed8;color:#fff;box-shadow:0 8px 18px rgba(29,78,216,.14)}
+  .top-actions a.primary:hover{background:#1e40af;border-color:#1e40af}
+  .header{width:100%;max-width:720px;padding:24px 24px 0;text-align:center}
+  .crumbs{display:flex;justify-content:center;gap:8px;flex-wrap:wrap;margin-bottom:14px;font-size:12px;color:#94a3b8}
+  .crumbs a{color:#1d4ed8;text-decoration:none}
+  .header h1{font-size:28px;font-weight:700;color:#0f172a;margin-bottom:8px}.header h1 span{color:#f48120}
+  .header p{font-size:14px;color:#64748b}
   /* Dropzone */
-  .dropzone{width:100%;max-width:720px;margin-top:24px;border:2px dashed #333;border-radius:16px;padding:48px 24px;text-align:center;cursor:pointer;transition:.3s;background:#111;display:block;touch-action:manipulation}
-  .dropzone:hover,.dropzone.dragover{border-color:#2563eb;background:rgba(37,99,235,.05)}
+  .dropzone{width:100%;max-width:720px;margin-top:24px;border:2px dashed #cbd5e1;border-radius:20px;padding:48px 24px;text-align:center;cursor:pointer;transition:.3s;background:#fff;display:block;touch-action:manipulation;box-shadow:0 12px 28px rgba(15,23,42,.05)}
+  .dropzone:hover,.dropzone.dragover{border-color:#1d4ed8;background:#f8fbff}
   .dropzone.has-files{padding:24px;text-align:left}
-  .dropzone .icon{width:48px;height:48px;margin:0 auto 12px;border-radius:50%;background:#1a1a1a;display:flex;align-items:center;justify-content:center;font-size:22px;color:#2563eb}
+  .dropzone .icon{width:48px;height:48px;margin:0 auto 12px;border-radius:50%;background:#eff6ff;display:flex;align-items:center;justify-content:center;font-size:22px;color:#1d4ed8}
   .dropzone.has-files .icon{margin:0 0 12px}
-  .dropzone .label{font-size:15px;color:#aaa}.dropzone .label em{color:#2563eb;font-style:normal;cursor:pointer}
-  .dropzone .hint{font-size:12px;color:#555;margin-top:6px}
+  .dropzone .label{font-size:15px;color:#334155}.dropzone .label em{color:#1d4ed8;font-style:normal;cursor:pointer}
   .native-file-input{position:absolute;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none}
   .picker-actions{width:100%;max-width:720px;display:flex;justify-content:center;gap:10px;flex-wrap:wrap;margin-top:12px}
-  .picker-btn{padding:10px 18px;border-radius:10px;border:1px solid #2b2b2b;background:#111;color:#d1d5db;cursor:pointer;transition:.2s}
-  .picker-btn:hover{border-color:#2563eb;color:#fff}
-  .site-publish-note{width:100%;max-width:720px;margin-top:12px;padding:14px 16px;border-radius:12px;background:#0f172a;border:1px solid rgba(37,99,235,.28);color:#cbd5e1;font-size:13px;line-height:1.7}
-  .site-publish-note strong{color:#93c5fd}
+  .picker-btn{padding:10px 18px;border-radius:12px;border:1px solid #dce4ee;background:#fff;color:#334155;cursor:pointer;transition:.2s;box-shadow:0 1px 2px rgba(15,23,42,.04)}
+  .picker-btn:hover{border-color:#c7d6ea;color:#0f172a;background:#f8fafc}
+  .upload-settings{width:100%;max-width:720px;margin-top:12px;padding:14px 16px;border-radius:14px;background:#fff;border:1px solid #dce4ee;box-shadow:0 6px 16px rgba(15,23,42,.04)}
+  .upload-settings.is-disabled{opacity:.65}
+  .upload-settings-title{font-size:13px;font-weight:700;color:#0f172a;margin-bottom:10px}
+  .setting-check{display:flex;align-items:flex-start;gap:10px;cursor:pointer}
+  .setting-check input{margin-top:3px}
+  .setting-copy{display:grid;gap:4px}
+  .setting-copy strong{font-size:13px;color:#0f172a}
+  .setting-copy span{font-size:12px;line-height:1.6;color:#64748b}
+  .settings-mode-note{margin-top:10px;font-size:12px;color:#64748b}
+  .upload-note,.site-publish-note{width:100%;max-width:720px;margin-top:12px;padding:14px 16px;border-radius:14px;background:#f8fbff;border:1px solid #d7e6fb;color:#334155;font-size:13px;line-height:1.7}
+  .upload-note strong,.site-publish-note strong{color:#1d4ed8}
 
   /* File list */
   .file-list{width:100%;max-width:720px;margin-top:16px;display:none}
   .file-list.show{display:block}
   .file-list-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
-  .file-list-header .count{font-size:13px;color:#888}
+  .file-list-header .count{font-size:13px;color:#64748b}
   .file-list-header .clear-btn{font-size:12px;color:#ef4444;cursor:pointer;background:none;border:none;opacity:.7;transition:.2s}
   .file-list-header .clear-btn:hover{opacity:1}
-  .file-item{display:flex;align-items:center;gap:12px;padding:10px 14px;background:#141414;border:1px solid #222;border-radius:10px;margin-bottom:8px;transition:.2s}
-  .file-item:hover{border-color:#333}
-  .file-item .thumb{width:48px;height:48px;border-radius:6px;object-fit:contain;background:#0a0a0a;flex-shrink:0}
+  .file-item{display:flex;align-items:center;gap:12px;padding:10px 14px;background:#fff;border:1px solid #dce4ee;border-radius:12px;margin-bottom:8px;transition:.2s;box-shadow:0 4px 12px rgba(15,23,42,.04)}
+  .file-item:hover{border-color:#c7d6ea}
+  .file-item .thumb{width:48px;height:48px;border-radius:8px;object-fit:contain;background:#f8fafc;flex-shrink:0}
   .file-item video.thumb{object-fit:cover}
   .file-item .info{flex:1;min-width:0}
-  .file-item .name{font-size:13px;color:#ccc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .file-item .size{font-size:11px;color:#555;margin-top:2px}
+  .file-item .name{font-size:13px;color:#334155;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .file-item .size{font-size:11px;color:#64748b;margin-top:2px}
   .file-item .status{font-size:11px;width:72px;text-align:right;flex-shrink:0}
-  .item-status.waiting{color:#666}
+  .item-status.waiting{color:#94a3b8}
   .item-status.uploading{color:#f59e0b}
   .item-status.done{color:#16a34a}
   .item-status.error{color:#ef4444}
-  .file-item .remove{background:none;border:none;color:#555;cursor:pointer;font-size:16px;padding:4px;flex-shrink:0;transition:.15s;line-height:1}
+  .file-item .remove{background:none;border:none;color:#94a3b8;cursor:pointer;font-size:16px;padding:4px;flex-shrink:0;transition:.15s;line-height:1}
   .file-item .remove:hover{color:#ef4444}
-  .progress-bar{height:3px;background:#222;border-radius:2px;overflow:hidden;margin-top:6px}
-  .progress-bar .fill{height:100%;background:#2563eb;width:0;transition:.15s;border-radius:2px}
+  .progress-bar{height:4px;background:#e2e8f0;border-radius:999px;overflow:hidden;margin-top:6px}
+  .progress-bar .fill{height:100%;background:#1d4ed8;width:0;transition:.15s;border-radius:999px}
 
   /* Actions bar */
   .actions-bar{width:100%;max-width:720px;margin-top:16px;display:none}
   .actions-bar.show{display:flex;gap:10px;justify-content:flex-start;flex-wrap:wrap}
   .actions-bar button{padding:10px 28px;border-radius:10px;font-size:14px;cursor:pointer;transition:.2s;font-weight:500}
-  .btn-upload{background:#2563eb;color:#fff;border:none}
-  .btn-upload:hover{background:#1d4ed8}
-  .btn-upload:disabled{background:#333;color:#666;cursor:not-allowed}
-  .btn-clear{background:transparent;border:1px solid #333;color:#888}
-  .btn-clear:hover{border-color:#555;color:#aaa}
+  .btn-upload{background:#1d4ed8;color:#fff;border:1px solid #1d4ed8;box-shadow:0 8px 18px rgba(29,78,216,.16)}
+  .btn-upload:hover{background:#1e40af}
+  .btn-upload:disabled{background:#cbd5e1;border-color:#cbd5e1;color:#64748b;cursor:not-allowed;box-shadow:none}
+  .btn-clear{background:#fff;border:1px solid #dce4ee;color:#475569}
+  .btn-clear:hover{border-color:#c7d6ea;color:#0f172a;background:#f8fafc}
 
   /* Error */
   .error{width:100%;max-width:720px;color:#ef4444;font-size:13px;text-align:center;margin-top:12px;display:none}
@@ -73,182 +94,175 @@
   .results{width:100%;max-width:720px;margin-top:20px;display:none}
   .results.show{display:block}
   .results .header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
-  .results .header h3{font-size:16px;color:#fff}
-  .results .header .copy-all{padding:7px 16px;border-radius:8px;background:#2563eb;color:#fff;border:none;font-size:12px;cursor:pointer;transition:.2s}
-  .results .header .copy-all:hover{background:#1d4ed8}
-  .site-result-card{display:none;background:#111827;border:1px solid #1d4ed8;border-radius:12px;padding:16px;margin-bottom:16px}
+  .results .header h3{font-size:16px;color:#0f172a}
+  .results .header .copy-all{padding:7px 16px;border-radius:999px;background:#1d4ed8;color:#fff;border:none;font-size:12px;cursor:pointer;transition:.2s}
+  .results .header .copy-all:hover{background:#1e40af}
+  .site-result-card{display:none;background:#fff;border:1px solid #c7d7f7;border-radius:14px;padding:16px;margin-bottom:16px;box-shadow:0 8px 20px rgba(15,23,42,.05)}
   .site-result-card.show{display:block}
-  .site-result-title{font-size:15px;color:#fff;font-weight:600;margin-bottom:8px}
-  .site-result-meta{font-size:12px;color:#93c5fd;line-height:1.7;margin-bottom:10px}
+  .site-result-title{font-size:15px;color:#0f172a;font-weight:600;margin-bottom:8px}
+  .site-result-meta{font-size:12px;color:#1d4ed8;line-height:1.7;margin-bottom:10px}
   .site-result-notes{display:grid;gap:8px;margin:12px 0}
-  .site-result-note{font-size:12px;line-height:1.6;color:#cbd5e1;background:rgba(15,23,42,.45);border:1px solid rgba(148,163,184,.2);border-radius:10px;padding:10px 12px}
+  .site-result-note{font-size:12px;line-height:1.6;color:#334155;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:10px 12px}
   .site-result-links{display:grid;gap:8px}
-  .site-result-links .link{font-size:12px;color:#93c5fd;word-break:break-all;font-family:'SF Mono',Consolas,monospace}
+  .site-result-links .link{font-size:12px;color:#1d4ed8;word-break:break-all;font-family:'SF Mono',Consolas,monospace}
   .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px}
-  .result-card{background:#141414;border:1px solid #222;border-radius:12px;overflow:hidden;transition:.2s}
-  .result-card:hover{border-color:#333}
-  .result-card .thumb-wrap{text-align:center;background:#0a0a0a;position:relative;padding:8px}
+  .result-card{background:#fff;border:1px solid #dce4ee;border-radius:14px;overflow:hidden;transition:.2s;box-shadow:0 6px 14px rgba(15,23,42,.04)}
+  .result-card:hover{border-color:#c7d6ea}
+  .result-card .thumb-wrap{text-align:center;background:#f8fafc;position:relative;padding:8px}
   .result-card .thumb-wrap img{max-width:100%;max-height:160px;object-fit:contain;border-radius:6px}
   .result-card .thumb-wrap video{max-width:100%;max-height:160px;border-radius:6px;background:#000}
   .type-tag{position:absolute;top:10px;left:10px;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:600}
-  .type-tag.img{background:rgba(37,99,235,.2);color:#60a5fa}
-  .type-tag.vid{background:rgba(239,68,68,.15);color:#f87171}
+  .type-tag.img{background:#eff6ff;color:#1d4ed8}
+  .type-tag.vid{background:#fff1f2;color:#e11d48}
   .result-card .body{padding:10px 12px}
-  .result-card .link{font-size:11px;color:#2563eb;word-break:break-all;font-family:'SF Mono',Consolas,monospace;margin-bottom:8px;line-height:1.4}
-  .result-card .sub-link{font-size:11px;color:#7dd3fc;word-break:break-all;font-family:'SF Mono',Consolas,monospace;margin-top:-2px;margin-bottom:8px;line-height:1.4}
+  .result-card .link{font-size:11px;color:#1d4ed8;word-break:break-all;font-family:'SF Mono',Consolas,monospace;margin-bottom:8px;line-height:1.4}
+  .result-card .sub-link{font-size:11px;color:#0369a1;word-break:break-all;font-family:'SF Mono',Consolas,monospace;margin-top:-2px;margin-bottom:8px;line-height:1.4}
+  .result-card .result-note{font-size:11px;line-height:1.6;color:#92400e;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:8px 10px;margin-bottom:8px}
   .link-actions{display:flex;gap:6px}
   .link-actions button{flex:1;padding:5px 0;border-radius:6px;font-size:11px;cursor:pointer;transition:.15s}
-  .cp-btn{background:#1a1a1a;border:1px solid #333;color:#aaa}
-  .cp-btn:hover{border-color:#555;color:#fff}
-  .open-btn{background:transparent;border:1px solid #333;color:#888}
-  .open-btn:hover{border-color:#555;color:#fff}
+  .cp-btn{background:#fff;border:1px solid #dce4ee;color:#475569}
+  .cp-btn:hover{border-color:#c7d6ea;color:#0f172a;background:#f8fafc}
+  .open-btn{background:#eff6ff;border:1px solid #c7d7f7;color:#1d4ed8}
+  .open-btn:hover{border-color:#93c5fd;color:#1e3a8a}
 
   /* Footer & Toast */
-  .footer-info{margin-top:auto;padding:24px;font-size:12px;color:#444;text-align:center}
-  .footer-info a{color:#2563eb;text-decoration:none}
+  .footer-info{margin-top:auto;padding:24px;font-size:12px;color:#64748b;text-align:center}
+  .footer-info a{color:#1d4ed8;text-decoration:none}
   .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);padding:12px 24px;background:#16a34a;color:#fff;border-radius:8px;font-size:14px;opacity:0;transition:.3s;pointer-events:none;z-index:100}
   .toast.show{opacity:1}
-  /* i18n classes */
-  html[lang="en"] .zh { display: none !important; }
-  html[lang="zh-CN"] .en { display: none !important; }
+  @media (max-width:760px){
+    .topbar-inner{padding:12px 16px}
+    .header{padding:20px 16px 0}
+  }
 </style>
 </head>
 <body>
 
-<div class="header">
-  <div class="top-links">
-    <a href="/"><span class="zh">返回首页</span><span class="en">Home</span></a>
-    <a href="/account"><span class="zh">注册 / 登录 / API Key</span><span class="en">Register / Login / API Key</span></a>
-    <a href="#" id="langToggle" style="font-weight:bold;color:#aaa;">EN</a>
+<div class="topbar">
+  <div class="topbar-inner">
+    <a class="brand" href="/en/">
+      <span class="brand-logo">O</span>
+      <span class="brand-copy">
+        <strong>OkFile Console</strong>
+        <span>Manual Upload</span>
+      </span>
+    </a>
+    <div class="top-actions">
+      <a href="/en/">Home</a>
+      <a href="/en/account/">Account</a>
+      <a href="/SKILL.md" target="_blank" rel="noopener">Docs</a>
+      <a class="primary" href="https://pypi.org/project/okfile/" target="_blank" rel="noopener">CLI</a>
+    </div>
   </div>
-  <h1>Ok<span>File</span></h1>
-  <p id="headerDesc"><span class="zh">匿名文件或站点目录上载，即刻发布 &middot; 支持批量上载 / 分片上载 / 子域名站点发布 &middot; 单文件最大</span><span class="en">Anonymous file or site-folder upload, instant publishing &middot; Batch / Multipart / Subdomain site publish &middot; Max file size</span> <strong style="color:#2563eb" class="max-size-label">500MB</strong></p>
+</div>
+
+<div class="header">
+  <div class="crumbs">
+    <a href="/en/">Home</a>
+    <span>/</span>
+    <span>Manual Upload</span>
+  </div>
 </div>
 
 <!-- Dropzone -->
 <label class="dropzone" id="dz" for="fi">
   <div class="icon">&#8679;</div>
-  <div class="label"><span class="zh">拖拽文件到这里，或 <em>点击选择</em></span><span class="en">Drag and drop files here, or <em>click to select</em></span></div>
-  <div class="hint" id="dzHint">
-    <span class="zh">支持图片 / 视频 / PDF / 常见文件，也支持整个静态站点目录；单文件最大 <span class="max-size-label">500MB</span></span>
-    <span class="en">Supports images / videos / PDFs / common files, plus full static site folders. Max file size <span class="max-size-label">500MB</span>. Auto-chunks if exceeded.</span>
-  </div>
+  <div class="label">Drag and drop files here, or <em>click to select</em></div>
 </label>
 <input type="file" id="fi" class="native-file-input" multiple>
 <input type="file" id="di" class="native-file-input" webkitdirectory directory multiple>
 <div class="picker-actions">
-  <button type="button" class="picker-btn" id="pickFilesBtn"><span class="zh">选择文件</span><span class="en">Select Files</span></button>
-  <button type="button" class="picker-btn" id="pickFolderBtn"><span class="zh">选择整个文件夹</span><span class="en">Select Folder</span></button>
+  <button type="button" class="picker-btn" id="pickFilesBtn">Select Files to Upload</button>
+  <button type="button" class="picker-btn" id="pickFolderBtn">Select Folder as Site</button>
 </div>
-<div class="site-publish-note">
-  <span class="zh"><strong>站点发布说明：</strong> 选择整个静态站点文件夹后，OkFile 会保留子目录结构并发布到独立子域名；如果根目录存在 `index.html`，站点首页会直接渲染它；如果不存在，则首页自动显示目录列表。Agent 不需要自己生成一个用于列目录的 `index.html`，只需要上传真实文件结构即可；发布后子目录路径也可直接访问。</span>
-  <span class="en"><strong>Site publish:</strong> Select a full static site folder and OkFile preserves nested paths, then publishes it to a dedicated subdomain. If root `index.html` exists, the site root renders it. Otherwise the site root automatically shows a directory listing. Agents should not generate a synthetic `index.html` just to list files; simply upload the real folder tree. Nested subdirectory paths remain directly accessible after publish.</span>
+<div class="upload-settings" id="uploadSettings">
+  <div class="upload-settings-title">Upload Options</div>
+  <label class="setting-check" for="burnAfterReadToggle">
+    <input type="checkbox" id="burnAfterReadToggle">
+    <span class="setting-copy">
+      <strong>Burn after read</strong>
+      <span id="burnAfterReadHelp">For file uploads only. The first successful preview or download invalidates the file and all related links.</span>
+    </span>
+  </label>
+  <div class="settings-mode-note" id="settingsModeNote">This option is available for single-file uploads. Site publishing keeps its existing behavior.</div>
 </div>
 
 <!-- Actions -->
 <div class="actions-bar" id="ab">
-  <button type="button" class="btn-upload" id="upBtn">&#9653; <span class="btn-text"><span class="zh">开始上载</span><span class="en">Start Upload</span></span> (<span id="uc">0</span>)</button>
-  <button class="btn-clear" onclick="clearFiles()"><span class="zh">清空重新选择</span><span class="en">Clear and Reselect</span></button>
+  <button type="button" class="btn-upload" id="upBtn">&#9653; <span class="btn-text">Start Upload</span> (<span id="uc">0</span>)</button>
+  <button class="btn-clear" onclick="clearFiles()">Clear and Reselect</button>
+</div>
+
+<!-- Results -->
+<div class="results" id="res">
+  <div class="header">
+    <h3>&#10004; Upload Complete</h3>
+    <button class="copy-all" onclick="copyAllLinks()">Copy All Links</button>
+  </div>
+  <div class="site-result-card" id="siteResultCard"></div>
+  <div class="grid" id="grid"></div>
 </div>
 
 <!-- File List -->
 <div class="file-list" id="fl">
   <div class="file-list-header">
-    <span class="count" id="fc">0 个文件</span>
-    <button class="clear-btn" onclick="clearFiles()"><span class="zh">清空列表</span><span class="en">Clear List</span></button>
+    <span class="count" id="fc">0 files</span>
+    <button class="clear-btn" onclick="clearFiles()">Clear List</button>
   </div>
   <div id="fiList"></div>
 </div>
 
 <div class="error" id="err"></div>
 
-<!-- Results -->
-<div class="results" id="res">
-  <div class="header">
-    <h3>&#10004; <span class="zh">上载完成</span><span class="en">Upload Complete</span></h3>
-    <button class="copy-all" onclick="copyAllLinks()"><span class="zh">复制全部链接</span><span class="en">Copy All Links</span></button>
-  </div>
-  <div class="site-result-card" id="siteResultCard"></div>
-  <div class="grid" id="grid"></div>
-</div>
-
-<div class="footer-info">Powered by OkFile &middot; Manual Upload &middot; V1.0</div>
+<div class="footer-info">Powered by OkFile &middot; Manual Upload &middot; Quick Upload + Multipart + Site Publish &middot; API and Python CLI recommended for automation</div>
 <div class="toast" id="ts"></div>
 
 <script>
-// ── i18n ──
-let currentLang = localStorage.getItem('okfile_lang') || 'zh-CN';
+// ── Copy ──
+const currentLang = 'en';
 document.documentElement.setAttribute('lang', currentLang);
 
 const t = {
-  'en': {
-    title: 'OkFile - Manual Upload',
-    exceeds: 'exceeds limit',
-    waiting: 'Wait',
-    done: 'Done',
-    error: 'Error',
-    uploading: 'Uploading...',
-    allDone: 'All Done',
-    copyAll: 'All links copied!',
-    copied: 'Copied!',
-    copyLink: 'Copy Link',
-    copyDirect: 'Copy Direct',
-    preview: 'Preview',
-    uploadFail: 'Upload failed',
-    netErr: 'Network error',
-    noUrl: 'No valid upload URL returned',
-    fileWord: 'files',
-    startUpload: 'Start Upload',
-    siteWord: 'site files',
-    mixModeError: 'Please do not mix folder upload and loose files in one batch',
-    siteUploading: 'Publishing site...',
-    siteReady: 'Site published',
-    siteRoot: 'Site Domain',
-    siteEntry: 'Entry Page',
-    siteHost: 'Subdomain',
-    copySite: 'Copy Site URL',
-    openSite: 'Open Site',
-    siteRootStripped: 'The shared top-level folder was stripped and used as the site root.',
-    siteNoIndexListing: 'No root index.html was found, so the site home shows a directory listing with inline image/video access and download links for other files.',
-    siteAutoListingHint: 'OkFile generated the directory listing automatically. Agents only need to upload the real folder tree and should not create a synthetic index.html for listing.',
-    siteSubdirsReady: 'Nested subdirectories were preserved and remain directly accessible after publishing.'
-  },
-  'zh-CN': {
-    title: 'OkFile - 人工上载',
-    exceeds: '超过限制',
-    waiting: '等待',
-    done: '完成',
-    error: '失败',
-    uploading: '上载中...',
-    allDone: '全部完成',
-    copyAll: '全部直链已复制!',
-    copied: '已复制!',
-    copyLink: '复制链接',
-    copyDirect: '复制直链',
-    preview: '预览/播放',
-    uploadFail: '上载失败',
-    netErr: '网络错误',
-    noUrl: '服务端未返回可用上载地址',
-    fileWord: '个文件',
-    startUpload: '开始上载',
-    siteWord: '个站点文件',
-    mixModeError: '请不要在同一批次里混合“文件夹上载”和普通文件上载',
-    siteUploading: '站点发布中...',
-    siteReady: '站点已发布',
-    siteRoot: '站点子域名首页',
-    siteEntry: '入口页面',
-    siteHost: '子域名',
-    copySite: '复制站点链接',
-    openSite: '打开站点',
-    siteRootStripped: '已自动裁剪公共顶层目录，并将该目录内容作为站点根目录发布。',
-    siteNoIndexListing: '未检测到根目录 index.html，站点首页将显示目录列表；图片和视频可直接打开，其它文件提供下载链接。',
-    siteAutoListingHint: '目录列表由 OkFile 自动生成。Agent 只需要上传真实目录树，不要为了列目录再额外生成一个 index.html。',
-    siteSubdirsReady: '嵌套子目录已保留，发布后可以直接访问对应路径。'
-  }
+  title: 'OkFile - Manual Upload',
+  exceeds: 'exceeds limit',
+  waiting: 'Wait',
+  done: 'Done',
+  error: 'Error',
+  uploading: 'Uploading...',
+  allDone: 'All Done',
+  copyAll: 'All links copied!',
+  copied: 'Copied!',
+  copyLink: 'Copy Link',
+  copyDirect: 'Copy Direct',
+  preview: 'Preview',
+  uploadFail: 'Upload failed',
+  netErr: 'Network error',
+  noUrl: 'No valid upload URL returned',
+  fileWord: 'files',
+  startUpload: 'Start Upload',
+  siteWord: 'site files',
+  mixModeError: 'Please do not mix folder upload and loose files in one batch',
+  siteUploading: 'Publishing site...',
+  siteReady: 'Site published',
+  siteRoot: 'Site Domain',
+  siteEntry: 'Entry Page',
+  siteHost: 'Subdomain',
+  copySite: 'Copy Site URL',
+  openSite: 'Open Site',
+  siteRootStripped: 'The shared top-level folder was stripped and used as the site root.',
+  siteNoIndexListing: 'No root index.html was found, so the site home shows a directory listing with inline image/video access and download links for other files.',
+  siteAutoListingHint: 'OkFile generated the directory listing automatically. Agents only need to upload the real folder tree and should not create a synthetic index.html for listing.',
+  siteSubdirsReady: 'Nested subdirectories were preserved and remain directly accessible after publishing.',
+  siteUpdateBanner: 'You are updating an existing site: {siteId}. Select the full new folder tree and OkFile will switch to the new release atomically after upload.',
+  siteUpdateFailed: 'Some files failed, so site publishing was cancelled: ',
+  siteVersionSwitched: 'Switched to site release V{versionNo}',
+  burnAfterReadLabel: 'Burn after read',
+  burnAfterReadHelp: 'For file uploads only. The first successful preview or download invalidates the file and all related links.',
+  burnAfterReadModeNote: 'This option is available for single-file uploads. Site publishing keeps its existing behavior.',
+  burnAfterReadModeNoteSite: 'Site publishing ignores burn-after-read. Switch back to file upload mode to use this option.',
+  burnAfterReadResult: 'One-time file: the first successful preview or download invalidates this file and all related links.'
 };
-function _t(key) { return t[currentLang][key]; }
-
-const langToggle = document.getElementById('langToggle');
+function _t(key) { return t[key]; }
 
 // ── State ──
 let pendingFiles = []; // { file, thumbUrl, status, progress, result, fileType, uid }
@@ -257,6 +271,7 @@ let siteResult = null;
 let siteUploadMeta = null;
 let uploadConfig = {
   maxSize: 500 * 1024 * 1024,
+  quickUploadMaxSize: 5 * 1024 * 1024,
   multipartThreshold: 25 * 1024 * 1024,
   partSize: 10 * 1024 * 1024,
   siteUpload: {
@@ -267,8 +282,6 @@ let uploadConfig = {
   }
 };
 const MULTIPART_UPLOAD_CONCURRENCY = 3;
-
-langToggle.textContent = currentLang === 'zh-CN' ? 'EN' : '中';
 
 function applyLangToJS() {
   document.title = _t('title');
@@ -287,17 +300,6 @@ function applyLangToJS() {
 }
 applyLangToJS();
 
-langToggle.addEventListener('click', (e) => {
-  e.preventDefault();
-  currentLang = currentLang === 'zh-CN' ? 'en' : 'zh-CN';
-  document.documentElement.setAttribute('lang', currentLang);
-  localStorage.setItem('okfile_lang', currentLang);
-  langToggle.textContent = currentLang === 'zh-CN' ? 'EN' : '中';
-  applyLangToJS();
-  renderFileList();
-  showResults();
-});
-
 const API = location.origin;
 const $ = id => document.getElementById(id);
 const dz=$('dz'), fi=$('fi'), di=$('di'), fl=$('fl'), fc=$('fc'), fiList=$('fiList');
@@ -306,6 +308,10 @@ const err=$('err'), res=$('res'), grid=$('grid'), ts=$('ts');
 const siteResultCard = $('siteResultCard');
 const pickFilesBtn = $('pickFilesBtn');
 const pickFolderBtn = $('pickFolderBtn');
+const uploadSettings = $('uploadSettings');
+const burnAfterReadToggle = $('burnAfterReadToggle');
+const burnAfterReadHelp = $('burnAfterReadHelp');
+const settingsModeNote = $('settingsModeNote');
 const pageParams = new URLSearchParams(location.search);
 const siteUpdateTargetId = /^st_[a-z0-9]+$/i.test(String(pageParams.get('siteId') || '').trim())
   ? String(pageParams.get('siteId') || '').trim()
@@ -318,9 +324,7 @@ if (siteUpdateTargetId) {
     const banner = document.createElement('div');
     banner.className = 'site-result-note';
     banner.style.marginTop = '10px';
-    banner.textContent = currentLang === 'zh-CN'
-      ? `当前正在更新已有站点：${siteUpdateTargetId}。请选择新的完整目录，上传完成后会原子切换到新版本。`
-      : `You are updating an existing site: ${siteUpdateTargetId}. Select the full new folder tree and OkFile will switch to the new release atomically after upload.`;
+    banner.textContent = _t('siteUpdateBanner').replace('{siteId}', siteUpdateTargetId);
     noteHost.appendChild(banner);
   }
 }
@@ -330,10 +334,37 @@ if (upBtn) {
     uploadAll();
   });
 }
-if (pickFilesBtn) pickFilesBtn.addEventListener('click', () => fi.click());
-if (pickFolderBtn) pickFolderBtn.addEventListener('click', () => di.click());
+
+function syncUploadSettings() {
+  const isSiteMode = batchMode === 'site';
+  if (burnAfterReadHelp) burnAfterReadHelp.textContent = _t('burnAfterReadHelp');
+  if (settingsModeNote) {
+    settingsModeNote.textContent = isSiteMode ? _t('burnAfterReadModeNoteSite') : _t('burnAfterReadModeNote');
+  }
+  if (burnAfterReadToggle) {
+    burnAfterReadToggle.disabled = isSiteMode;
+  }
+  if (uploadSettings) {
+    uploadSettings.classList.toggle('is-disabled', isSiteMode);
+  }
+}
+
+function openPicker(input) {
+  if (!input) return;
+  try {
+    if (typeof input.showPicker === 'function') {
+      input.showPicker();
+      return;
+    }
+  } catch (_) {}
+  input.click();
+}
+
+if (pickFilesBtn) pickFilesBtn.addEventListener('click', () => openPicker(fi));
+if (pickFolderBtn) pickFolderBtn.addEventListener('click', () => openPicker(di));
 
 let MAX_SIZE = uploadConfig.maxSize;
+syncUploadSettings();
 
 // ── Dropzone events ──
 dz.ondragover = e => { e.preventDefault(); dz.classList.add('dragover') };
@@ -416,6 +447,7 @@ function addFiles(fileList, mode) {
   applyLangToJS();
   fi.value = '';
   di.value = '';
+  syncUploadSettings();
 }
 
 function removeFile(uid) {
@@ -427,6 +459,7 @@ function removeFile(uid) {
   }
   renderFileList();
   applyLangToJS();
+  syncUploadSettings();
 }
 
 function clearFiles() {
@@ -443,6 +476,7 @@ function clearFiles() {
   err.classList.remove('show');
   fi.value = '';
   di.value = '';
+  syncUploadSettings();
 }
 
 function renderFileList() {
@@ -772,7 +806,7 @@ async function uploadSiteBatch() {
 
     const failed = pendingFiles.filter(item => item.status !== 'done' || !(item.result && item.result.id));
     if (failed.length) {
-      throw new Error((currentLang === 'zh-CN' ? '仍有文件上载失败，站点发布已取消：' : 'Some files failed, site publish was cancelled: ') + failed[0].relativePath);
+      throw new Error(_t('siteUpdateFailed') + failed[0].relativePath);
     }
 
     const siteCompleteRes = await fetch(API + '/api/site/complete', {
@@ -805,22 +839,46 @@ function uploadOne(item) {
   return new Promise(async resolve => {
     try {
       item.status = 'uploading';
-      item.progress = 0;
+      item.progress = 5;
       renderFileList();
 
-      const prepareRes = await fetch(API + '/api/upload/prepare', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          filename: item.file.name,
-          size: item.file.size,
-          contentType: item.file.type || undefined
-        })
-      });
+      let prepareData = null;
+      if (item.file.size <= (uploadConfig.quickUploadMaxSize || 5 * 1024 * 1024)) {
+        const quickBody = new FormData();
+        quickBody.append('file', item.file, item.file.name);
+        if (burnAfterReadToggle && burnAfterReadToggle.checked && batchMode !== 'site') {
+          quickBody.append('burnAfterRead', 'true');
+        }
+        const quickRes = await fetch(API + '/api/upload/quick', {
+          method: 'POST',
+          body: quickBody
+        });
+        const quickData = await quickRes.json().catch(() => null);
+        if (!quickRes.ok || !(quickData && quickData.success)) {
+          throw new Error((quickData && quickData.error) || `Quick upload failed: HTTP ${quickRes.status}`);
+        }
+        item.result = quickData;
+        item.status = 'done';
+        updateItemProgress(item, 100);
+        renderFileList();
+        resolve();
+        return;
+      } else {
+        const prepareRes = await fetch(API + '/api/upload/prepare', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            filename: item.file.name,
+            size: item.file.size,
+            contentType: item.file.type || undefined,
+            burnAfterRead: Boolean(burnAfterReadToggle && burnAfterReadToggle.checked && batchMode !== 'site')
+          })
+        });
 
-      const prepareData = await prepareRes.json().catch(() => null);
-      if (!prepareRes.ok || !(prepareData && prepareData.success)) {
-        throw new Error((prepareData && prepareData.error) || `Upload prepare failed: HTTP ${prepareRes.status}`);
+        prepareData = await prepareRes.json().catch(() => null);
+        if (!prepareRes.ok || !(prepareData && prepareData.success)) {
+          throw new Error((prepareData && prepareData.error) || `Upload prepare failed: HTTP ${prepareRes.status}`);
+        }
       }
 
       if (prepareData.mode === 'multipart') {
@@ -905,7 +963,7 @@ function renderSiteResult() {
     notes.push(`<div class="site-result-note">${escHTML(_t('siteSubdirsReady'))}</div>`);
   }
   if (siteResult && siteResult.updateMode && siteResult.versionNo) {
-    notes.push(`<div class="site-result-note">${escHTML(currentLang === 'zh-CN' ? `已切换到站点版本 V${siteResult.versionNo}` : `Switched to site release V${siteResult.versionNo}`)}</div>`);
+    notes.push(`<div class="site-result-note">${escHTML(_t('siteVersionSwitched').replace('{versionNo}', siteResult.versionNo))}</div>`);
   }
   siteResultCard.classList.add('show');
   siteResultCard.innerHTML = `
@@ -957,6 +1015,7 @@ function showResults() {
     return `<div class="result-card">
       <div class="thumb-wrap">${media}<span class="type-tag ${tagClass}">${tagLabel}</span></div>
       <div class="body">
+      ${r.burnAfterRead ? `<div class="result-note">${escHTML(_t('burnAfterReadResult'))}</div>` : ''}
       <div class="link" title="Direct Link">${directUrl}</div>
       <div class="sub-link" title="Preview/Play Link">${previewUrl}</div>
         <div class="link-actions">

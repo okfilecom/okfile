@@ -3,10 +3,12 @@ import { AwsClient } from 'aws4fetch';
 const MAX_SIZE = 500 * 1024 * 1024;
 const MULTIPART_THRESHOLD = 25 * 1024 * 1024;
 const PART_SIZE = 10 * 1024 * 1024;
+const QUICK_UPLOAD_MAX_SIZE = 5 * 1024 * 1024;
 const DEFAULT_CACHE = 'public, max-age=31536000, immutable';
 const PRESIGNED_EXPIRES = 3600;
 const PREPARE_RATE_LIMIT = 80;
 const PREPARE_RATE_WINDOW_MS = 10 * 60 * 1000;
+const ANONYMOUS_RESOURCE_TTL_MS = 24 * 60 * 60 * 1000;
 const MAGIC_LINK_TTL_MS = 15 * 60 * 1000;
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const DEFAULT_API_KEY_PREPARE_LIMIT = 120;
@@ -14,10 +16,10 @@ const DEFAULT_API_KEY_WINDOW_SEC = 3600;
 const DEFAULT_API_KEY_UPLOAD_LIMIT = 1000;
 const STATIC_PAGE_BROWSER_TTL = 300;
 const STATIC_PAGE_EDGE_TTL = 3600;
-const STATIC_PAGE_CACHE_VERSION = 'v11';
+const STATIC_PAGE_CACHE_VERSION = 'v29';
 const UPLOAD_NOTIFY_TO_EMAIL = 'sungz@163.com';
 const UPLOAD_NOTIFY_DAILY_LIMIT = 10;
-const UPLOAD_NOTIFY_SUBJECT_PREFIX = 'OkFile 新文件通知';
+const UPLOAD_NOTIFY_SUBJECT_PREFIX = 'OkFile New Upload';
 const EXPIRED_CLEANUP_BATCH_LIMIT = 200;
 const ADMIN_PANEL_ORIGIN = 'https://admin.okfile.com';
 const PUBLISH_DOMAIN_SETTING_KEY = 'publish_origin';
@@ -32,7 +34,7 @@ const BAIDU_VERIFY_CONTENT = '80b9870da59a4334909987183760b183';
 const SITE_DEFAULT_ENTRY = 'index.html';
 const SITE_MAX_FILES = 300;
 const SITE_MAX_TOTAL_SIZE = 1024 * 1024 * 1024;
-const SITE_SUBDOMAIN_PREFIX = 'st-';
+const SITE_SUBDOMAIN_PREFIX = '';
 const RESERVED_SITE_SUBDOMAINS = new Set(['www', 'admin', 'api', 'send', 'smtp', 'imap', 'pop', 'mail', 'autodiscover']);
 
 const prepareRateBuckets = new Map();
@@ -110,6 +112,10 @@ function localizedAccountPath(lang) {
   return lang === 'en' ? '/en/account/' : '/zh/account/';
 }
 
+function localizedAccountLoginPath(lang) {
+  return localizedAccountPath(lang).replace(/\/$/, '') + '/login';
+}
+
 function textResponse(text, status = 200, extraHeaders = {}) {
   return new Response(text, {
     status,
@@ -142,40 +148,38 @@ function svgResponse(svg, status = 200, extraHeaders = {}) {
 }
 
 const FAVICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <rect width="64" height="64" rx="14" fill="#0a0a0a"/>
-  <path d="M18 18h11c10.5 0 17 5.3 17 14s-6.5 14-17 14H18V18zm10.4 21.2c5.9 0 9.6-2.6 9.6-7.2s-3.7-7.2-9.6-7.2H26v14.4h2.4z" fill="#2563eb"/>
-  <path d="M48 20 35 46h-8l13-26h8z" fill="#60a5fa"/>
+  <defs>
+    <linearGradient id="okfileLogoGradient" x1="8" y1="8" x2="56" y2="56" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#f48120"/>
+      <stop offset="1" stop-color="#ffb347"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="18" fill="url(#okfileLogoGradient)"/>
+  <text x="32" y="42" text-anchor="middle" font-size="30" font-family="Inter, Arial, sans-serif" font-weight="800" fill="#ffffff">O</text>
 </svg>`;
 
 function pageSeoConfig(lang, pageType) {
-  const isEn = lang === 'en';
   if (pageType === 'upload') {
     return {
-      title: isEn ? 'OkFile - Manual Upload' : 'OkFile - 人工上载',
-      description: isEn
-        ? 'Manual upload page for OkFile. Upload images, videos, PDFs, common files, or a full static site folder and publish it to a dedicated subdomain. API integration remains the recommended path for Agents.'
-        : 'OkFile 人工上载页面，支持图片、视频、PDF、常见文件和整个静态站点目录；文件夹上载后可发布到独立子域名。对 Agent 而言，仍推荐优先使用 API 接入。',
+      title: 'OkFile - Manual Upload',
+      description: 'Manual upload page for OkFile. Upload images, videos, PDFs, common files, or a full static site folder and publish it to a dedicated subdomain. API integration remains the recommended path for agents.',
       robots: 'noindex,follow'
     };
   }
   return {
-    title: isEn
-      ? 'OkFile — Agent-First File Upload and Publish Service'
-      : 'OkFile — 面向 Agent 的文件上载与发布服务',
-    description: isEn
-      ? 'OkFile provides agent-first file upload and publish APIs with anonymous access, API Keys, direct links, preview URLs, multipart uploads up to 500MB, and static site folder publishing to dedicated subdomains.'
-      : 'OkFile 主要为 Agent 提供文件上载与发布能力，支持匿名调用、API Key、直链返回、预览链接、最高 500MB 的分片上载，以及静态站点目录发布到独立子域名。',
+    title: 'OkFile - Agent-First File Upload and Publish Service',
+    description: 'OkFile provides agent-first file upload and publish APIs with anonymous access, API keys, direct links, preview URLs, multipart uploads up to 500MB, and static site folder publishing to dedicated subdomains.',
     robots: 'index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1'
   };
 }
 
 function buildStructuredData(origin, currentPagePath, lang, pageType) {
-  const inLanguage = lang === 'en' ? 'en' : 'zh-CN';
+  const inLanguage = 'en';
   if (pageType === 'upload') {
     return {
       '@context': 'https://schema.org',
       '@type': 'WebPage',
-      name: lang === 'en' ? 'OkFile Manual Upload and Site Publish Page' : 'OkFile 人工上载与站点发布页',
+      name: 'OkFile Manual Upload and Site Publish Page',
       url: `${origin}${currentPagePath}`,
       inLanguage,
       isPartOf: {
@@ -193,9 +197,7 @@ function buildStructuredData(origin, currentPagePath, lang, pageType) {
     operatingSystem: 'Web',
     url: `${origin}${currentPagePath}`,
     inLanguage,
-    description: lang === 'en'
-      ? 'Agent-first file upload and publish service with direct links, preview URLs, anonymous access, API Key support, and static site publishing to dedicated subdomains.'
-      : '面向 Agent 的文件上载与发布服务，支持直链、预览链接、匿名调用、API Key，以及静态站点发布到独立子域名。',
+    description: 'Agent-first file upload and publish service with direct links, preview URLs, anonymous access, API key support, and static site publishing to dedicated subdomains.',
     offers: {
       '@type': 'Offer',
       price: '0',
@@ -205,10 +207,8 @@ function buildStructuredData(origin, currentPagePath, lang, pageType) {
 }
 
 function buildSeoHeadMarkup(origin, currentPagePath, lang, pageType, title, description, robots) {
-  const locale = lang === 'en' ? 'en_US' : 'zh_CN';
+  const locale = 'en_US';
   const currentUrl = `${origin}${currentPagePath}`;
-  const zhUrl = `${origin}${pageType === 'upload' ? localizedUploadPath('zh') : localizedHomePath('zh')}`;
-  const enUrl = `${origin}${pageType === 'upload' ? localizedUploadPath('en') : localizedHomePath('en')}`;
   const structuredData = JSON.stringify(buildStructuredData(origin, currentPagePath, lang, pageType))
     .replace(/</g, '\\u003c');
   return (
@@ -224,9 +224,8 @@ function buildSeoHeadMarkup(origin, currentPagePath, lang, pageType, title, desc
     `  <meta name="twitter:title" content="${escapeHtml(title)}">\n` +
     `  <meta name="twitter:description" content="${escapeHtml(description)}">\n` +
     `  <link rel="canonical" href="${currentUrl}">\n` +
-    `  <link rel="alternate" hreflang="zh-CN" href="${zhUrl}">\n` +
-    `  <link rel="alternate" hreflang="en" href="${enUrl}">\n` +
-    `  <link rel="alternate" hreflang="x-default" href="${origin}${localizedHomePath('zh')}">\n` +
+    `  <link rel="alternate" hreflang="en" href="${currentUrl}">\n` +
+    `  <link rel="alternate" hreflang="x-default" href="${origin}${localizedHomePath('en')}">\n` +
     `  <script type="application/ld+json">${structuredData}</script>\n`
   );
 }
@@ -251,15 +250,13 @@ function renderRobotsTxt(request) {
 function renderSitemapXml(request) {
   const origin = new URL(request.url).origin;
   const pages = [
-    { loc: `${origin}${localizedHomePath('zh')}`, alternates: { 'zh-CN': `${origin}${localizedHomePath('zh')}`, en: `${origin}${localizedHomePath('en')}` } },
-    { loc: `${origin}${localizedHomePath('en')}`, alternates: { 'zh-CN': `${origin}${localizedHomePath('zh')}`, en: `${origin}${localizedHomePath('en')}` } }
+    { loc: `${origin}${localizedHomePath('en')}`, alternates: { en: `${origin}${localizedHomePath('en')}` } }
   ];
   const body = pages.map((page) => (
     '  <url>\n' +
     `    <loc>${escapeHtml(page.loc)}</loc>\n` +
-    `    <xhtml:link rel="alternate" hreflang="zh-CN" href="${escapeHtml(page.alternates['zh-CN'])}"/>\n` +
     `    <xhtml:link rel="alternate" hreflang="en" href="${escapeHtml(page.alternates.en)}"/>\n` +
-    `    <xhtml:link rel="alternate" hreflang="x-default" href="${escapeHtml(page.alternates['zh-CN'])}"/>\n` +
+    `    <xhtml:link rel="alternate" hreflang="x-default" href="${escapeHtml(page.alternates.en)}"/>\n` +
     '  </url>'
   )).join('\n');
   return xmlResponse(
@@ -283,10 +280,8 @@ function stripLanguageSpans(html, lang) {
 
 async function renderLocalizedStaticPage(request, env, assetPath, lang, pageType) {
   const requestUrl = new URL(request.url);
-  const currentLang = lang === 'en' ? 'en' : 'zh-CN';
-  const otherLang = lang === 'en' ? 'zh' : 'en';
-  const currentPagePath = pageType === 'upload' ? localizedUploadPath(lang) : localizedHomePath(lang);
-  const alternatePagePath = pageType === 'upload' ? localizedUploadPath(otherLang) : localizedHomePath(otherLang);
+  const currentLang = 'en';
+  const currentPagePath = pageType === 'upload' ? localizedUploadPath('en') : localizedHomePath('en');
   const cache = caches.default;
   const cacheKeyUrl = new URL(request.url);
   cacheKeyUrl.pathname = `/__localized_static__/${STATIC_PAGE_CACHE_VERSION}${currentPagePath}`;
@@ -297,7 +292,8 @@ async function renderLocalizedStaticPage(request, env, assetPath, lang, pageType
 
   const assetUrl = new URL(request.url);
   assetUrl.pathname = assetPath;
-  assetUrl.search = '';
+  // Bust stale ASSETS cache between Pages deployments for localized pages.
+  assetUrl.search = '?__assetv=' + encodeURIComponent(STATIC_PAGE_CACHE_VERSION);
 
   let assetResponse = await env.ASSETS.fetch(new Request(assetUrl.toString(), request));
   if (assetResponse.status >= 300 && assetResponse.status < 400) {
@@ -332,15 +328,15 @@ async function renderLocalizedStaticPage(request, env, assetPath, lang, pageType
 
   html = html.replace(
     /<a href="#" id="langToggle"[^>]*>[\s\S]*?<\/a>/,
-    `<a href="${alternatePagePath}" id="langToggle" style="font-weight:bold;color:#aaa;">${lang === 'en' ? '中文' : 'EN'}</a>`
+    ''
   );
   html = html.replace(
     /let currentLang = localStorage\.getItem\('okfile_lang'\) \|\| 'zh-CN';/,
-    `let currentLang = '${currentLang}';`
+    `let currentLang = 'en';`
   );
   html = html.replace(
     /langToggle\.addEventListener\('click',[\s\S]*?\}\);/,
-    `langToggle.href = '${alternatePagePath}';`
+    ''
   );
   html = html.replace(
     '</head>',
@@ -388,9 +384,16 @@ async function sha256Hex(value) {
   return [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, '0')).join('');
 }
 
-function sanitizeFilename(name) {
-  const trimmed = (name || 'unnamed').trim();
-  return trimmed ? trimmed.slice(0, 200) : 'unnamed';
+function sanitizeFilename(name, options = {}) {
+  const { fallback = null } = options;
+  const raw = String(name ?? '');
+  if (/[\u0000-\u001f\u007f]/.test(raw)) return fallback;
+  const trimmed = raw.trim();
+  if (!trimmed) return fallback;
+  const normalized = trimmed.replace(/\\/g, '/');
+  if (normalized.includes('/')) return fallback;
+  if (normalized === '.' || normalized === '..') return fallback;
+  return trimmed.slice(0, 200);
 }
 
 function normalizeEmail(email) {
@@ -458,11 +461,11 @@ function formatSiteListingTime(value = '') {
 
 function siteListingVisual(kind, contentType = '', name = '') {
   if (kind === 'directory') {
-    return { icon: 'DIR', className: 'directory', label: '目录' };
+    return { icon: 'DIR', className: 'directory', label: 'Directory' };
   }
   const ext = fileExtension(name);
-  if (isImage(contentType)) return { icon: 'IMG', className: 'image', label: '图片' };
-  if (isVideo(contentType)) return { icon: 'VID', className: 'video', label: '视频' };
+  if (isImage(contentType)) return { icon: 'IMG', className: 'image', label: 'Image' };
+  if (isVideo(contentType)) return { icon: 'VID', className: 'video', label: 'Video' };
   if (isPDF(contentType)) return { icon: 'PDF', className: 'pdf', label: 'PDF' };
   if (contentType.startsWith('text/html') || ext === 'html' || ext === 'htm') {
     return { icon: 'HTML', className: 'code', label: 'HTML' };
@@ -475,23 +478,23 @@ function siteListingVisual(kind, contentType = '', name = '') {
     contentType.includes('ecmascript') ||
     ['js', 'mjs', 'cjs', 'ts', 'tsx', 'jsx'].includes(ext)
   ) {
-    return { icon: 'JS', className: 'code', label: '脚本' };
+    return { icon: 'JS', className: 'code', label: 'Script' };
   }
-  if (contentType.startsWith('audio/')) return { icon: 'AUD', className: 'audio', label: '音频' };
+  if (contentType.startsWith('audio/')) return { icon: 'AUD', className: 'audio', label: 'Audio' };
   if (
     contentType.includes('zip') ||
     contentType.includes('compressed') ||
     ['zip', 'rar', '7z', 'tar', 'gz', 'tgz', 'bz2'].includes(ext)
   ) {
-    return { icon: 'ZIP', className: 'archive', label: '压缩包' };
+    return { icon: 'ZIP', className: 'archive', label: 'Archive' };
   }
   if (
     contentType.startsWith('text/') ||
     ['txt', 'md', 'json', 'yml', 'yaml', 'xml', 'csv', 'log'].includes(ext)
   ) {
-    return { icon: 'TXT', className: 'text', label: '文本' };
+    return { icon: 'TXT', className: 'text', label: 'Text' };
   }
-  return { icon: 'FILE', className: 'file', label: '文件' };
+  return { icon: 'FILE', className: 'file', label: 'File' };
 }
 
 function siteListingFilterCategory(kind, contentType = '', name = '') {
@@ -536,7 +539,12 @@ function formatSize(size) {
 }
 
 function mediaUrl(id) {
-  return `/i/${id}`;
+  return `/raw/${id}`;
+}
+
+function previewMediaUrl(meta) {
+  if (meta?.previewRawUrl) return meta.previewRawUrl;
+  return mediaUrl(meta?.id || '');
 }
 
 function controlledDownloadUrl(id) {
@@ -560,8 +568,23 @@ function siteUpdateTokenKey(token) {
 }
 
 function sanitizeSiteName(name) {
-  const trimmed = String(name || '').trim();
-  return trimmed ? trimmed.slice(0, 120) : 'site';
+  const raw = String(name || '');
+  const cleaned = raw
+    .replace(/[\u0000-\u001f\u007f]/g, ' ')
+    .replace(/[<>]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return cleaned ? cleaned.slice(0, 120) : 'site';
+}
+
+function methodNotAllowed(request, allowedMethods) {
+  const allow = Array.isArray(allowedMethods) ? allowedMethods.join(', ') : String(allowedMethods || 'GET');
+  return json({
+    error: `Method ${request.method} not allowed`,
+    allow
+  }, 405, {
+    Allow: allow
+  });
 }
 
 function normalizeRelativePath(value) {
@@ -738,6 +761,19 @@ function getClientIp(request) {
   return request.headers.get('CF-Connecting-IP') || request.headers.get('X-Forwarded-For') || 'unknown';
 }
 
+function getClientRegion(request) {
+  const cf = request?.cf || {};
+  const parts = [];
+  if (cf.country) parts.push(String(cf.country));
+  if (cf.regionCode && String(cf.regionCode) !== String(cf.country || '')) {
+    parts.push(String(cf.regionCode));
+  } else if (cf.region && String(cf.region) !== String(cf.country || '')) {
+    parts.push(String(cf.region));
+  }
+  if (cf.colo) parts.push(String(cf.colo));
+  return parts.length ? parts.join(' / ') : 'Unknown';
+}
+
 function takeRateLimit(bucketMap, key, limit, windowMs) {
   const now = Date.now();
   const list = bucketMap.get(key) || [];
@@ -801,39 +837,153 @@ function accountShell(title, body, script = '', options = {}) {
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>${escapeHtml(title)}</title>
 <meta name="robots" content="${escapeHtml(robots)}">
-<meta name="theme-color" content="#0a0a0a">
+<meta name="theme-color" content="#f5f7fb">
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-body{font-family:-apple-system,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;background:#0a0a0a;color:#e5e5e5;min-height:100vh;padding:32px 16px}
-.wrap{max-width:980px;margin:0 auto}
+html{background:#f5f7fb}
+body{font-family:Inter,ui-sans-serif,system-ui,-apple-system,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;background:linear-gradient(180deg,#f7f9fc 0%,#eef3f9 100%);color:#1f2937;min-height:100vh}
+.wrap{max-width:none;margin:0}
 .topbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:24px;gap:12px;flex-wrap:wrap}
-.brand{font-size:24px;font-weight:700;color:#fff;text-decoration:none}
-.brand span{color:#2563eb}
+.brand{font-size:24px;font-weight:700;color:#111827;text-decoration:none}
+.brand span{color:#f48120}
 .nav{display:flex;gap:10px;flex-wrap:wrap}
-.nav a,.nav button{padding:10px 16px;border-radius:10px;border:1px solid #2b2b2b;background:#111;color:#cfcfcf;text-decoration:none;cursor:pointer}
-.nav a:hover,.nav button:hover{border-color:#2563eb;color:#fff}
-.card{background:#111;border:1px solid #222;border-radius:16px;padding:24px;margin-bottom:18px}
-.card h1,.card h2{font-size:22px;color:#fff;margin-bottom:8px}
-.muted{color:#8a8a8a;font-size:14px;line-height:1.6}
-.hidden{display:none}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px}
+.nav a,.nav button{padding:10px 16px;border-radius:12px;border:1px solid #d7dee8;background:#fff;color:#334155;text-decoration:none;cursor:pointer;transition:.18s;box-shadow:0 1px 2px rgba(15,23,42,.04)}
+.nav a:hover,.nav button:hover{border-color:#bccadd;background:#f8fafc;color:#0f172a}
+.card{background:#fff;border:1px solid #dce4ee;border-radius:18px;padding:24px;margin-bottom:18px;box-shadow:0 12px 30px rgba(15,23,42,.06)}
+.card h1,.card h2{font-size:22px;color:#0f172a;margin-bottom:8px}
+.muted{color:#64748b;font-size:14px;line-height:1.6}
+.hidden{display:none !important}
+.cf-shell{display:grid;grid-template-columns:280px minmax(0,1fr);min-height:100vh;background:linear-gradient(180deg,#f7f9fc 0%,#eef3f9 100%)}
+.cf-sidebar{display:flex;flex-direction:column;gap:20px;padding:18px 16px;border-right:1px solid #dde6f0;background:#fbfcfe;position:sticky;top:0;height:100vh;overflow:auto}
+.cf-sidebar-header{display:grid;gap:14px}
+.cf-sidebar-brand{display:inline-flex;align-items:center;gap:10px;text-decoration:none}
+.cf-logo{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:10px;background:linear-gradient(135deg,#f48120,#ffb347);color:#fff;font-weight:800;box-shadow:0 8px 18px rgba(244,129,32,.2)}
+.cf-brand-copy strong{display:block;color:#0f172a;font-size:16px}
+.cf-brand-copy span{display:block;color:#64748b;font-size:12px;margin-top:2px}
+.cf-account-card{padding:14px 14px 12px;border-radius:14px;background:#fff;border:1px solid #dce4ee}
+.cf-account-label{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#94a3b8}
+.cf-account-value{margin-top:6px;color:#0f172a;font-size:14px;font-weight:600;word-break:break-word}
+.cf-nav-group{display:grid;gap:8px}
+.cf-nav-title{padding:0 10px;font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:#94a3b8}
+.cf-nav-link{display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-radius:12px;text-decoration:none;color:#334155;border:1px solid transparent;transition:.18s}
+.cf-nav-link:hover{background:#f8fafc;border-color:#d7dee8;color:#0f172a}
+.cf-nav-link.active{background:#fff7ed;border-color:#fed7aa;color:#9a3412}
+.cf-nav-link strong{display:block;font-size:14px;font-weight:600}
+.cf-nav-link span{display:block;font-size:12px;color:#64748b;line-height:1.45;margin-top:2px}
+.cf-main{min-width:0;display:flex;flex-direction:column}
+.cf-topbar{position:sticky;top:0;z-index:10;display:flex;justify-content:space-between;align-items:center;gap:12px;padding:14px 20px;border-bottom:1px solid #dde6f0;background:rgba(247,249,252,.92);backdrop-filter:blur(12px)}
+.cf-topbar-title{display:grid;gap:4px}
+.cf-topbar-title .eyebrow{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:#f48120}
+.cf-topbar-title strong{color:#0f172a;font-size:18px}
+.cf-topbar-title span{color:#64748b;font-size:13px}
+.cf-topbar-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.cf-account-chip{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:999px;background:#fff;border:1px solid #d7dee8;color:#334155;font-size:12px;font-weight:600}
+.cf-content{padding:18px 20px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px}
 .field{margin-top:14px}
-.field label{display:block;font-size:13px;color:#aaa;margin-bottom:8px}
-.field input,.field select{width:100%;padding:12px 14px;border-radius:10px;border:1px solid #2b2b2b;background:#0b0b0b;color:#f5f5f5}
-.field button,.btn-primary{margin-top:14px;padding:12px 16px;border-radius:10px;border:none;background:#2563eb;color:#fff;cursor:pointer;font-weight:600}
-.field button:hover,.btn-primary:hover{background:#1d4ed8}
-.msg{margin-top:14px;font-size:14px;color:#86efac}
-.err{margin-top:14px;font-size:14px;color:#f87171}
+.field label{display:block;font-size:13px;color:#334155;margin-bottom:8px}
+.field input,.field select,.field textarea{width:100%;padding:12px 14px;border-radius:12px;border:1px solid #cfd8e3;background:#fff;color:#0f172a}
+.field input:focus,.field select:focus,.field textarea:focus{outline:none;border-color:#6b8ecf;box-shadow:0 0 0 3px rgba(59,130,246,.14)}
+.field button,.btn-primary,.btn-secondary,.btn-ghost,.btn-danger{display:inline-flex;align-items:center;justify-content:center;gap:8px;font-weight:600;cursor:pointer;transition:.18s}
+.field button,.btn-primary{margin-top:12px;padding:10px 14px;border-radius:12px;border:1px solid #1d4ed8;background:#1d4ed8;color:#fff;box-shadow:0 8px 18px rgba(29,78,216,.16)}
+.field button:hover,.btn-primary:hover{background:#1e40af;border-color:#1e40af}
+.btn-secondary{padding:8px 12px;border-radius:12px;border:1px solid #d7dee8;background:#fff;color:#334155}
+.btn-secondary:hover{border-color:#bccadd;background:#f8fafc;color:#0f172a}
+.btn-ghost{padding:8px 12px;border-radius:12px;border:1px solid transparent;background:transparent;color:#1d4ed8}
+.btn-ghost:hover{background:#eff6ff;border-color:#c7d7f7;color:#1e3a8a}
+.btn-danger{padding:8px 12px;border-radius:12px;border:1px solid #fecaca;background:#fff5f5;color:#b91c1c}
+.btn-danger:hover{background:#fee2e2;border-color:#fca5a5;color:#991b1b}
+.btn-primary:disabled,.btn-secondary:disabled,.btn-ghost:disabled,.btn-danger:disabled{opacity:.55;cursor:not-allowed}
+.msg{margin-top:14px;font-size:14px;color:#15803d}
+.err{margin-top:14px;font-size:14px;color:#b91c1c}
 .key-list{display:grid;gap:12px;margin-top:18px}
-.key-item{border:1px solid #222;border-radius:12px;padding:16px;background:#0c0c0c}
+.key-item{border:1px solid #dce4ee;border-radius:12px;padding:16px;background:#fff}
 .row{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap}
-.badge{display:inline-block;padding:4px 10px;border-radius:999px;background:#172554;color:#93c5fd;font-size:12px}
+.badge{display:inline-block;padding:4px 10px;border-radius:999px;background:#eff6ff;color:#1d4ed8;font-size:12px;border:1px solid #dbeafe}
 .mono{font-family:Consolas,'SF Mono',monospace;word-break:break-all}
-.note{margin-top:12px;padding:12px;border-radius:10px;background:#17255422;border:1px solid #1d4ed855;color:#bfdbfe;font-size:13px}
-table{width:100%;border-collapse:collapse;margin-top:14px}
-th,td{border-bottom:1px solid #222;padding:10px 8px;text-align:left;font-size:13px}
-th{color:#999}
-td input,td select{width:100%;padding:8px 10px;border-radius:8px;border:1px solid #2b2b2b;background:#0b0b0b;color:#f5f5f5}
+.note{margin-top:10px;padding:10px 12px;border-radius:12px;background:#f8fbff;border:1px solid #d7e6fb;color:#1d4ed8;font-size:12px}
+table{width:100%;border-collapse:collapse}
+th,td{border-bottom:1px solid #e7edf4;padding:11px 10px;text-align:left;font-size:13px;vertical-align:top}
+th{padding:9px 10px;color:#64748b;font-size:11px;font-weight:600;letter-spacing:.02em;background:#fbfcfe}
+td input,td select{width:100%;padding:8px 10px;border-radius:8px;border:1px solid #cfd8e3;background:#fff;color:#0f172a}
+.hero-card{padding:22px;border-radius:20px;background:linear-gradient(135deg,#ffffff,#f8fbff);border:1px solid #dce4ee}
+.hero-top{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;flex-wrap:wrap}
+.hero-copy h1{font-size:30px;line-height:1.2;margin-bottom:10px}
+.hero-copy p{max-width:760px}
+.hero-actions{display:flex;gap:10px;flex-wrap:wrap}
+.meta-line{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px}
+.meta-pill{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:999px;background:#f8fafc;border:1px solid #dce4ee;color:#334155;font-size:12px}
+.stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin:18px 0}
+.stat-card{padding:14px 16px;border-radius:16px;background:#fff;border:1px solid #dce4ee}
+.stat-label{font-size:12px;color:#64748b;text-transform:uppercase;letter-spacing:.05em}
+.stat-value{margin-top:8px;font-size:28px;font-weight:700;color:#0f172a}
+.stack{display:grid;gap:14px}
+.section-card{padding:0;overflow:hidden}
+.section-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:22px 24px 0 24px;flex-wrap:wrap}
+.section-head h2{margin-bottom:6px}
+.section-head p{max-width:760px}
+.section-actions{display:flex;gap:10px;flex-wrap:wrap}
+.section-body{padding:18px 20px 20px}
+.create-panel{display:none;padding:16px 20px;border-top:1px solid #e7edf4;background:#fbfdff}
+.create-panel.show{display:block}
+.inline-grid{display:grid;grid-template-columns:minmax(260px,1fr) auto;gap:12px;align-items:end}
+.table-wrap{overflow-x:auto;border-top:1px solid #e7edf4}
+.table-toolbar{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:14px 20px;border-top:1px solid #e7edf4;flex-wrap:wrap}
+.table-toolbar .toolbar-copy{max-width:720px}
+.token-name{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.token-name strong{font-size:14px;color:#0f172a}
+.status-pill{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;font-size:12px;font-weight:600;border:1px solid transparent}
+.status-pill.active{background:#ecfdf3;color:#166534;border-color:#bbf7d0}
+.status-pill.disabled{background:#f8fafc;color:#475569;border-color:#e2e8f0}
+.perm-summary{max-width:360px}
+.perm-summary strong{display:block;color:#334155;margin-bottom:4px}
+.subtle{font-size:12px;color:#64748b;line-height:1.55}
+.cell-stack{display:grid;gap:6px}
+.actions-cell{display:flex;gap:8px;flex-wrap:wrap;min-width:220px}
+.account-actions{position:relative;display:flex;justify-content:flex-end}
+.account-actions-toggle{margin:0;padding:0;width:30px;height:30px;border-radius:9px;border:1px solid #d7dee8;background:#fff;color:#334155;cursor:pointer;font-size:16px;font-weight:700;line-height:1;transition:.18s}
+.account-actions-toggle:hover{border-color:#bccadd;background:#f8fafc;color:#0f172a}
+.account-actions-toggle:focus-visible{outline:none;border-color:#6b8ecf;box-shadow:0 0 0 3px rgba(59,130,246,.14)}
+.account-actions.open .account-actions-toggle{border-color:#bccadd;background:#f8fafc;color:#0f172a}
+.account-actions-menu{position:absolute;top:calc(100% + 6px);right:0;z-index:80;display:none;min-width:200px;padding:6px 0;border-radius:13px;border:1px solid #d7dee8;background:#fff;box-shadow:0 16px 32px rgba(15,23,42,.12)}
+.account-actions.open .account-actions-menu{display:block}
+.account-actions.drop-up .account-actions-menu{top:auto;bottom:calc(100% + 6px)}
+.account-action-item{display:flex;align-items:center;width:100%;padding:9px 12px;border:none;background:transparent;color:#334155;text-decoration:none;text-align:left;font-size:12px;font-weight:600;cursor:pointer}
+.account-action-item:hover{background:#f8fafc;color:#0f172a}
+.account-action-item.danger{color:#b91c1c}
+.account-action-item.danger:hover{background:#fff5f5;color:#991b1b}
+.account-actions-divider{margin:6px 0;border-top:1px solid #eef2f7}
+.empty-state{padding:28px 24px;color:#64748b}
+.empty-state strong{display:block;color:#0f172a;font-size:16px;margin-bottom:8px}
+.secret-callout{margin-top:14px;padding:14px 16px;border-radius:14px;background:#eff6ff;border:1px solid #c7d7f7}
+.secret-callout strong{display:block;color:#1d4ed8;margin-bottom:8px}
+.helper-list{display:grid;gap:10px}
+.helper-item{padding:14px 16px;border:1px solid #dce4ee;border-radius:14px;background:#fff}
+.helper-item strong{display:block;color:#0f172a;margin-bottom:6px}
+.helper-item code{font-family:Consolas,'SF Mono',monospace;color:#1d4ed8}
+.page-view{display:none}
+.page-view.active{display:block}
+.metric-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px}
+.metric-card{padding:16px 18px;border-radius:16px;background:#fff;border:1px solid #dce4ee}
+.metric-card .k{font-size:12px;color:#64748b;text-transform:uppercase;letter-spacing:.05em}
+.metric-card .v{margin-top:8px;font-size:18px;font-weight:700;color:#0f172a;word-break:break-all}
+.metric-card .s{margin-top:6px;font-size:12px;color:#64748b;line-height:1.55}
+.overview-links{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
+.overview-link{display:block;padding:13px 14px;border-radius:14px;border:1px solid #dce4ee;background:#fff;text-decoration:none;color:#334155}
+.overview-link:hover{border-color:#c7d6ea;background:#f8fafc;color:#0f172a}
+.overview-link strong{display:block;font-size:14px;color:#0f172a}
+.overview-link span{display:block;font-size:12px;color:#64748b;line-height:1.5;margin-top:4px}
+.inline-link{color:#1d4ed8;text-decoration:none}
+.inline-link:hover{text-decoration:underline}
+@media (max-width: 860px){
+  .cf-shell{grid-template-columns:1fr}
+  .cf-sidebar{position:static;height:auto;border-right:none;border-bottom:1px solid #dde6f0}
+  .cf-topbar{padding:12px 16px}
+  .cf-content{padding:14px 16px}
+  .inline-grid{grid-template-columns:1fr}
+  .hero-copy h1{font-size:26px}
+  .actions-cell{min-width:0}
+}
 </style>
 </head>
 <body>
@@ -847,9 +997,246 @@ ${script}
 </html>`;
 }
 
-function accountPage(lang = 'zh') {
-  const isEn = lang === 'en';
-  const copy = isEn ? {
+function localizedAccountPagePath(lang, pageKey = 'overview') {
+  const base = localizedAccountPath(lang).replace(/\/$/, '');
+  return pageKey === 'overview' ? `${base}/` : `${base}/${pageKey}`;
+}
+
+function sanitizeRelativeNextPath(rawValue, fallback, isAllowed) {
+  const raw = String(rawValue || '').trim();
+  if (!raw || !raw.startsWith('/') || raw.startsWith('//') || raw.startsWith('/\\')) return fallback;
+  try {
+    const parsed = new URL(raw, 'https://okfile.local');
+    if (parsed.origin !== 'https://okfile.local') return fallback;
+    const candidate = `${parsed.pathname}${parsed.search}${parsed.hash}`;
+    const basePath = parsed.pathname;
+    return isAllowed(basePath, candidate) ? candidate : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function sanitizeAccountNextPath(rawValue, fallback = localizedAccountPagePath('en', 'overview')) {
+  return sanitizeRelativeNextPath(rawValue, fallback, (basePath) => {
+    if (basePath === localizedAccountLoginPath('en') || basePath === `${localizedAccountLoginPath('en')}/`) return false;
+    return basePath === '/en/account'
+      || basePath === '/en/account/'
+      || basePath.startsWith('/en/account/');
+  });
+}
+
+const ACCOUNT_PAGE_CONFIGS = {
+  overview: {
+    key: 'overview',
+    title: 'Overview',
+    subtitle: 'Personal summary across profile, storage, files, sites, and API Keys',
+    eyebrow: 'Account',
+  },
+  profile: {
+    key: 'profile',
+    title: 'Profile',
+    subtitle: 'Email, account ID, verification, and access level',
+    eyebrow: 'Account',
+  },
+  storage: {
+    key: 'storage',
+    title: 'Storage',
+    subtitle: 'Personal file and site storage totals',
+    eyebrow: 'Account',
+  },
+  files: {
+    key: 'files',
+    title: 'Files',
+    subtitle: 'Review uploaded files, direct links, and deletion actions',
+    eyebrow: 'Files',
+  },
+  sites: {
+    key: 'sites',
+    title: 'Sites',
+    subtitle: 'Review published sites, hostnames, status, and deletion actions',
+    eyebrow: 'Sites',
+  },
+  'api-keys': {
+    key: 'api-keys',
+    title: 'API Keys',
+    subtitle: 'Review, disable, and delete your OkFile API Keys',
+    eyebrow: 'API Keys',
+  },
+};
+
+let accountIndexesEnsured = false;
+let publishedFilesTableEnsured = false;
+let sitesTablesEnsured = false;
+
+function getAccountPageConfig(pageKey) {
+  return ACCOUNT_PAGE_CONFIGS[pageKey] || ACCOUNT_PAGE_CONFIGS.overview;
+}
+
+function accountNavLink(page, lang, key, title, desc) {
+  const activeClass = page.key === key ? ' active' : '';
+  return `<a class="cf-nav-link${activeClass}" href="${localizedAccountPagePath(lang, key)}"><div><strong>${escapeHtml(title)}</strong><span>${escapeHtml(desc)}</span></div></a>`;
+}
+
+function accountBreadcrumb(page) {
+  return '';
+}
+
+function accountContentForPage(page, copy, lang) {
+  if (page.key === 'overview') {
+    return `<div class="card section-card">
+      <div class="section-body">
+        <div class="subtle" style="margin-bottom:14px">Use the left navigation to open a dedicated page for each account capability. Overview stays focused on summary metrics and quick entry points.</div>
+      </div>
+    </div>
+    <div class="stats-grid" id="overviewStats"></div>
+    <div class="overview-grid">
+      <a class="overview-link" href="${localizedAccountPagePath(lang, 'profile')}">
+        <strong>${copy.overviewManageProfile}</strong>
+        <span>${copy.navProfileDesc}</span>
+      </a>
+      <a class="overview-link" href="${localizedAccountPagePath(lang, 'storage')}">
+        <strong>${copy.navStorage}</strong>
+        <span>${copy.navStorageDesc}</span>
+      </a>
+      <a class="overview-link" href="${localizedAccountPagePath(lang, 'files')}">
+        <strong>${copy.overviewManageFiles}</strong>
+        <span>${copy.navFilesDesc}</span>
+      </a>
+      <a class="overview-link" href="${localizedAccountPagePath(lang, 'sites')}">
+        <strong>${copy.overviewManageSites}</strong>
+        <span>${copy.navSitesDesc}</span>
+      </a>
+      <a class="overview-link" href="${localizedAccountPagePath(lang, 'api-keys')}">
+        <strong>${copy.overviewManageKeys}</strong>
+        <span>${copy.navKeysDesc}</span>
+      </a>
+    </div>`;
+  }
+
+  if (page.key === 'profile') {
+    return `<div class="card section-card">
+      <div class="section-body">
+        <div class="metric-grid" id="profileGrid"></div>
+      </div>
+    </div>`;
+  }
+
+  if (page.key === 'storage') {
+    return `<div class="card section-card">
+      <div class="section-body">
+        <div class="metric-grid" id="storageGrid"></div>
+      </div>
+    </div>`;
+  }
+
+  if (page.key === 'files') {
+    return `<div class="card section-card">
+      <div class="table-wrap" id="fileList"><div class="empty-state"><strong>Loading files...</strong><div>Please wait while OkFile loads your uploaded file records.</div></div></div>
+    </div>`;
+  }
+
+  if (page.key === 'sites') {
+    return `<div class="card section-card">
+      <div class="table-wrap" id="siteList"><div class="empty-state"><strong>Loading sites...</strong><div>Please wait while OkFile loads your published sites.</div></div></div>
+    </div>`;
+  }
+
+  if (page.key === 'api-keys') {
+    return `<div class="card section-card">
+      <div class="table-toolbar">
+        <div class="section-actions">
+          <button class="btn-primary" id="openCreateKeyBtn" type="button">${copy.openCreate}</button>
+        </div>
+      </div>
+      <div class="create-panel" id="createKeyPanel">
+        <div class="section-body">
+          <div class="field" style="margin-top:0;max-width:520px">
+            <label for="keyName">${copy.keyNameLabel}</label>
+            <input id="keyName" type="text" placeholder="${copy.keyNamePlaceholder}" />
+          </div>
+          <div class="inline-row" style="margin-top:14px">
+            <button class="btn-primary" id="createKeyBtn" type="button">${copy.createKey}</button>
+            <button class="btn-secondary" id="cancelCreateKeyBtn" type="button">${copy.cancelCreate}</button>
+          </div>
+          <div class="secret-callout hidden" id="newKeyCallout" style="margin-top:18px">
+            <strong>${copy.createSuccessLabel}</strong>
+            <div class="mono" id="newKeyBox"></div>
+          </div>
+        </div>
+      </div>
+      <div class="table-wrap" id="keyList"><div class="empty-state"><strong>Loading API Keys...</strong><div>Please wait while OkFile loads your account keys.</div></div></div>
+    </div>`;
+  }
+
+  return '';
+}
+
+function accountLoginPage(lang = 'en', nextPath = localizedAccountPagePath(lang, 'overview')) {
+  const copy = {
+    title: 'OkFile Sign In',
+    heading: 'Sign in to OkFile',
+    desc: 'Enter your email and OkFile will send a magic link from `no-reply@okfile.com`. Opening the link signs you in automatically.',
+    emailLabel: 'Email',
+    emailPlaceholder: 'you@example.com',
+    sendLink: 'Send Magic Link',
+    sendSuccess: 'Magic link sent. Please check your email.',
+    home: 'Home',
+    upload: 'Manual Upload'
+  };
+  return accountShell(
+    copy.title,
+    `<div class="topbar">
+      <a class="brand" href="${localizedHomePath(lang)}">OkFile</a>
+      <div class="nav">
+        <a href="${localizedHomePath(lang)}">${copy.home}</a>
+        <a href="${localizedUploadPath(lang)}">${copy.upload}</a>
+      </div>
+    </div>
+    <div style="max-width:720px;margin:56px auto;padding:0 20px 48px">
+      <div class="card" style="max-width:560px;margin:0 auto">
+        <h1>${copy.heading}</h1>
+        <p class="muted">${copy.desc.replace('`', '<code>').replace('`', '</code>')}</p>
+        <div class="field">
+          <label for="email">${copy.emailLabel}</label>
+          <input id="email" type="email" placeholder="${copy.emailPlaceholder}" />
+        </div>
+        <button class="btn-primary" id="sendLinkBtn">${copy.sendLink}</button>
+        <div class="msg hidden" id="authMsg"></div>
+        <div class="err hidden" id="authErr"></div>
+      </div>
+    </div>`,
+    `const NEXT_PATH=${JSON.stringify(nextPath)};
+const $=(id)=>document.getElementById(id);
+function show(el,msg){ if(!el) return; el.textContent=msg; el.classList.remove('hidden'); }
+function hide(el){ if(!el) return; el.textContent=''; el.classList.add('hidden'); }
+async function api(path,init){
+  const res=await fetch(path,{credentials:'same-origin',...init});
+  const data=await res.json().catch(()=>null);
+  if(!res.ok) throw new Error(data?.error||('HTTP '+res.status));
+  return data;
+}
+const sendLinkBtn=$('sendLinkBtn');
+if(sendLinkBtn) sendLinkBtn.onclick = async () => {
+  hide($('authMsg')); hide($('authErr'));
+  try{
+    await api('/api/auth/request-link',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({email:$('email').value,next:NEXT_PATH})
+    });
+    show($('authMsg'),${JSON.stringify(copy.sendSuccess)});
+  }catch(error){
+    show($('authErr'),error.message);
+  }
+};`,
+    { lang: 'en', robots: 'noindex,follow' }
+  );
+}
+
+function accountPage(lang = 'en', pageKey = 'overview', session = null, initialAccountData = null) {
+  const page = getAccountPageConfig(pageKey);
+  const breadcrumb = accountBreadcrumb(page);
+  const copy = {
     title: 'OkFile Account',
     manualUpload: 'Manual Upload',
     adminPanel: 'Admin',
@@ -859,219 +1246,795 @@ function accountPage(lang = 'zh') {
     emailLabel: 'Email',
     emailPlaceholder: 'you@example.com',
     sendLink: 'Send Magic Link',
-    dashboardTitle: 'Account',
-    dashboardDesc: 'After login, you can create API Keys for calling `/api/upload/prepare`. A new API Key is shown only once.',
+    dashboardTitle: 'Account Console',
+    dashboardDesc: 'Review your personal profile, storage usage, uploaded files, published sites, and API Keys from one account workspace.',
     createKeyTitle: 'Create API Key',
     keyNameLabel: 'Name',
     keyNamePlaceholder: 'Example: Desktop Client / Python Script',
-    createKey: 'Generate API Key',
-    usageTitle: 'How To Use',
+    createKey: 'Create API Key',
+    openCreate: 'Create Key',
+    cancelCreate: 'Cancel',
+    usageTitle: 'Recommended Usage',
     noKeys: 'No API Keys yet.',
     rateLimit: 'Rate limit',
     uploadQuota: 'Upload quota',
     createdAt: 'Created at',
-    currentUserPrefix: 'Signed in as: ',
+    lastUsedAt: 'Last used',
+    permissions: 'Permissions',
+    tokenPrefix: 'Token prefix',
+    status: 'Status',
+    actions: 'Actions',
+    created: 'Created',
+    docsLabel: 'Docs',
+    docsUrl: '/SKILL.md',
+    consoleLabel: 'OkFile',
+    navWorkspace: 'Overview',
+    navAccess: 'Workspace',
+    navContent: 'Content',
+    navResources: 'Resources',
+    navOverview: 'Overview',
+    navOverviewDesc: 'High-level summary across profile, storage, files, sites, and keys',
+    navProfile: 'Profile',
+    navProfileDesc: 'Email, account ID, verification, and access level',
+    navStorage: 'Storage',
+    navStorageDesc: 'Personal file and site storage totals',
+    navFiles: 'Files',
+    navFilesDesc: 'Review your uploaded files and direct links',
+    navSites: 'Sites',
+    navSitesDesc: 'Review your published sites and hostnames',
+    navKeys: 'API Keys',
+    navKeysDesc: 'Review, disable, and delete keys',
+    navUpload: 'Manual Upload',
+    navUploadDesc: 'Open the browser upload workspace',
+    navAdmin: 'Admin Console',
+    navAdminDesc: 'Open the admin control plane',
+    navDocsDesc: 'Open SKILL and integration docs',
+    topbarSection: 'Account',
+    guestLabel: 'Guest',
+    activityNever: 'Never used',
+    createPanelDesc: 'Create a named API Key for scripts, local apps, or agents. The full token is shown once only right after creation.',
+    createSuccessLabel: 'New API Key',
     adminSuffix: ' (Admin)',
     sendSuccess: 'Magic link sent. Please check your email.',
     createSuccess: 'API Key created. Copy and save it now.',
-    manualHome: localizedHomePath('en'),
-    uploadPath: localizedUploadPath('en'),
-    accountPath: localizedAccountPath('en'),
-    alternateAccountPath: localizedAccountPath('zh'),
-    langToggle: '中文'
-  } : {
-    title: 'OkFile 账户中心',
-    manualUpload: '人工上载',
-    adminPanel: '管理员后台',
-    logout: '退出登录',
-    authTitle: '邮箱注册 / 登录',
-    authDesc: '输入邮箱后，系统会通过 `no-reply@okfile.com` 发送 Magic Link。点击邮件中的验证链接后自动登录。',
-    emailLabel: '邮箱地址',
-    emailPlaceholder: 'you@example.com',
-    sendLink: '发送登录链接',
-    dashboardTitle: '账户中心',
-    dashboardDesc: '登录后可以创建 API Key，用于调用 `/api/upload/prepare`。API Key 只会在创建时显示一次。',
-    createKeyTitle: '创建 API Key',
-    keyNameLabel: '名称',
-    keyNamePlaceholder: '例如：桌面客户端 / Python 脚本',
-    createKey: '生成 API Key',
-    usageTitle: '调用方式',
-    noKeys: '还没有 API Key。',
-    rateLimit: '频率限制',
-    uploadQuota: '上载次数',
-    createdAt: '创建时间',
-    currentUserPrefix: '当前登录邮箱：',
-    adminSuffix: '（管理员）',
-    sendSuccess: '验证链接已发送，请检查邮箱。',
-    createSuccess: 'API Key 已生成，请立即复制保存。',
-    manualHome: localizedHomePath('zh'),
-    uploadPath: localizedUploadPath('zh'),
-    accountPath: localizedAccountPath('zh'),
-    alternateAccountPath: localizedAccountPath('en'),
-    langToggle: 'EN'
+    toggleDisable: 'Disable',
+    toggleEnable: 'Enable',
+    toggleBusy: 'Updating...',
+    toggleSuccess: 'API Key status updated.',
+    deleteKey: 'Delete API Key',
+    deleteConfirm: 'Delete this API Key? Existing clients using it will stop working immediately.',
+    deleteSuccess: 'API Key deleted.',
+    deleteBusy: 'Deleting...',
+    lastActiveNow: 'just now',
+    filesEmpty: 'No uploaded files yet.',
+    sitesEmpty: 'No published sites yet.',
+    openFile: 'Open',
+    downloadFile: 'Download',
+    openSite: 'Open Site',
+    deleteFile: 'Delete File',
+    deleteSite: 'Delete Site',
+    deleteFileConfirm: 'Delete this file? Its public links will stop working immediately.',
+    deleteSiteConfirm: 'Delete this site? Its hostname and published content will stop working immediately.',
+    deleteFileSuccess: 'File deleted.',
+    deleteSiteSuccess: 'Site deleted.',
+    deleteFileBusy: 'Deleting file...',
+    deleteSiteBusy: 'Deleting site...',
+    fileStorage: 'File Storage',
+    siteStorage: 'Site Storage',
+    accountRole: 'Role',
+    registeredAt: 'Registered',
+    verifiedAt: 'Verified',
+    lastLoginAt: 'Last Login',
+    userId: 'User ID',
+    overviewManageFiles: 'Manage Files',
+    overviewManageSites: 'Manage Sites',
+    overviewManageKeys: 'Manage API Keys',
+    overviewManageProfile: 'View Personal Info',
+    roleAdmin: 'Admin',
+    roleUser: 'User',
+    manualHome: localizedHomePath(lang),
+    uploadPath: localizedUploadPath(lang),
   };
+  const initialEmail = session?.email || copy.guestLabel;
+  const initialChip = escapeHtml(session?.email ? `${session.email}${session.isAdmin ? copy.adminSuffix : ''}` : copy.guestLabel);
+  const adminLinkClass = session?.isAdmin ? 'btn-secondary' : 'btn-secondary hidden';
+  const logoutClass = session ? 'btn-secondary' : 'btn-secondary hidden';
   return accountShell(
     copy.title,
-    `<div class="topbar">
-      <a class="brand" href="${copy.manualHome}">Ok<span>File</span></a>
-      <div class="nav">
-        <a href="${copy.uploadPath}">${copy.manualUpload}</a>
-        <a href="${ADMIN_PANEL_ORIGIN}/" id="adminLink" class="hidden">${copy.adminPanel}</a>
-        <a href="${copy.alternateAccountPath}">${copy.langToggle}</a>
-        <button id="logoutBtn" class="hidden">${copy.logout}</button>
-      </div>
-    </div>
-
-    <div class="card" id="authCard">
-      <h1>${copy.authTitle}</h1>
-      <p class="muted">${copy.authDesc.replace('`', '<code>').replace('`', '</code>')}</p>
-      <div class="field">
-        <label for="email">${copy.emailLabel}</label>
-        <input id="email" type="email" placeholder="${copy.emailPlaceholder}" />
-      </div>
-      <button class="btn-primary" id="sendLinkBtn">${copy.sendLink}</button>
-      <div class="msg hidden" id="authMsg"></div>
-      <div class="err hidden" id="authErr"></div>
-    </div>
-
-    <div class="card hidden" id="dashboardCard">
-      <h1>${copy.dashboardTitle}</h1>
-      <p class="muted">${copy.dashboardDesc.replace('`', '<code>').replace('`', '</code>')}</p>
-      <div class="note" id="userSummary"></div>
-      <div class="grid">
-        <div class="card" style="margin-bottom:0">
-          <h2>${copy.createKeyTitle}</h2>
-          <div class="field">
-            <label for="keyName">${copy.keyNameLabel}</label>
-            <input id="keyName" type="text" placeholder="${copy.keyNamePlaceholder}" />
+    `<div class="cf-shell">
+      <aside class="cf-sidebar">
+        <div class="cf-sidebar-header">
+          <a class="cf-sidebar-brand" href="${copy.manualHome}">
+            <span class="cf-logo">O</span>
+            <span class="cf-brand-copy">
+              <strong>${copy.consoleLabel}</strong>
+              <span id="sidebarWorkspaceLabel">${escapeHtml(initialEmail)}</span>
+            </span>
+          </a>
+        </div>
+        <nav class="cf-nav-group">
+          <div class="cf-nav-title">${copy.navWorkspace}</div>
+          ${accountNavLink(page, lang, 'overview', copy.navOverview, copy.navOverviewDesc)}
+        </nav>
+        <nav class="cf-nav-group">
+          <div class="cf-nav-title">${copy.navAccess}</div>
+          ${accountNavLink(page, lang, 'profile', copy.navProfile, copy.navProfileDesc)}
+          ${accountNavLink(page, lang, 'storage', copy.navStorage, copy.navStorageDesc)}
+          ${accountNavLink(page, lang, 'api-keys', copy.navKeys, copy.navKeysDesc)}
+        </nav>
+        <nav class="cf-nav-group">
+          <div class="cf-nav-title">${copy.navContent}</div>
+          ${accountNavLink(page, lang, 'files', copy.navFiles, copy.navFilesDesc)}
+          ${accountNavLink(page, lang, 'sites', copy.navSites, copy.navSitesDesc)}
+        </nav>
+        <nav class="cf-nav-group">
+          <div class="cf-nav-title">${copy.navResources}</div>
+          <a class="cf-nav-link" href="${copy.docsUrl}" target="_blank" rel="noopener">
+            <div>
+              <strong>${copy.docsLabel}</strong>
+              <span>${copy.navDocsDesc}</span>
+            </div>
+          </a>
+        </nav>
+      </aside>
+      <main class="cf-main">
+        <div class="cf-topbar">
+          <div class="cf-topbar-title">
+            ${breadcrumb ? `<div class="cf-breadcrumb">${breadcrumb}</div>` : ''}
+            <strong>${escapeHtml(page.title)}</strong>
           </div>
-          <button class="btn-primary" id="createKeyBtn">${copy.createKey}</button>
-          <div class="msg hidden" id="createMsg"></div>
-          <div class="err hidden" id="createErr"></div>
-          <div class="note hidden mono" id="newKeyBox"></div>
+          <div class="cf-topbar-actions">
+            <span class="cf-account-chip" id="topAccountChip">${initialChip}</span>
+            <a class="${adminLinkClass}" href="${ADMIN_PANEL_ORIGIN}/" id="adminLinkTop">${copy.adminPanel}</a>
+            <button id="logoutBtn" class="${logoutClass}">${copy.logout}</button>
+          </div>
         </div>
-        <div class="card" style="margin-bottom:0">
-          <h2>${copy.usageTitle}</h2>
-          <div class="note mono">POST /api/upload/prepare
-{
-  "filename": "demo.jpg",
-  "size": 12345,
-  "contentType": "image/jpeg",
-  "apiKey": "okf_..."
-}</div>
+        <div class="cf-content">
+          <div class="stack" id="dashboardCard">
+            <div>
+              <div class="msg hidden" id="accountMsg"></div>
+              <div class="err hidden" id="accountErr"></div>
+            </div>
+            ${accountContentForPage(page, copy, lang)}
+          </div>
         </div>
-      </div>
-      <div class="key-list" id="keyList"></div>
+      </main>
     </div>`,
-    `const $=(id)=>document.getElementById(id);
+    `const PAGE_KEY=${JSON.stringify(page.key)};
+const LOGIN_PATH=${JSON.stringify(localizedAccountLoginPath(lang))};
+const INITIAL_ACCOUNT_DATA=${JSON.stringify(initialAccountData || null)};
+const $=(id)=>document.getElementById(id);
 const i18n=${JSON.stringify({
       noKeys: copy.noKeys,
       rateLimit: copy.rateLimit,
       uploadQuota: copy.uploadQuota,
       createdAt: copy.createdAt,
-      currentUserPrefix: copy.currentUserPrefix,
+      lastUsedAt: copy.lastUsedAt,
+      permissions: copy.permissions,
+      tokenPrefix: copy.tokenPrefix,
+      status: copy.status,
+      actions: copy.actions,
+      created: copy.created,
+      activityNever: copy.activityNever,
       adminSuffix: copy.adminSuffix,
       sendSuccess: copy.sendSuccess,
-      createSuccess: copy.createSuccess
+      createSuccess: copy.createSuccess,
+      createSuccessLabel: copy.createSuccessLabel,
+      cancelCreate: copy.cancelCreate,
+      toggleDisable: copy.toggleDisable,
+      toggleEnable: copy.toggleEnable,
+      toggleBusy: copy.toggleBusy,
+      toggleSuccess: copy.toggleSuccess,
+      deleteKey: copy.deleteKey,
+      deleteConfirm: copy.deleteConfirm,
+      deleteSuccess: copy.deleteSuccess,
+      deleteBusy: copy.deleteBusy,
+      lastActiveNow: copy.lastActiveNow,
+      guestLabel: copy.guestLabel,
+      filesEmpty: copy.filesEmpty,
+      sitesEmpty: copy.sitesEmpty,
+      openFile: copy.openFile,
+      downloadFile: copy.downloadFile,
+      openSite: copy.openSite,
+      deleteFile: copy.deleteFile,
+      deleteSite: copy.deleteSite,
+      deleteFileConfirm: copy.deleteFileConfirm,
+      deleteSiteConfirm: copy.deleteSiteConfirm,
+      deleteFileSuccess: copy.deleteFileSuccess,
+      deleteSiteSuccess: copy.deleteSiteSuccess,
+      deleteFileBusy: copy.deleteFileBusy,
+      deleteSiteBusy: copy.deleteSiteBusy,
+      fileStorage: copy.fileStorage,
+      siteStorage: copy.siteStorage,
+      accountRole: copy.accountRole,
+      registeredAt: copy.registeredAt,
+      verifiedAt: copy.verifiedAt,
+      lastLoginAt: copy.lastLoginAt,
+      userId: copy.userId,
+      roleAdmin: copy.roleAdmin,
+      roleUser: copy.roleUser
     })};
-const authCard=$('authCard'),dashboardCard=$('dashboardCard'),adminLink=$('adminLink'),logoutBtn=$('logoutBtn');
-const authMsg=$('authMsg'),authErr=$('authErr'),createMsg=$('createMsg'),createErr=$('createErr'),newKeyBox=$('newKeyBox');
-function show(el,msg){el.textContent=msg;el.classList.remove('hidden')}
-function hide(el){el.textContent='';el.classList.add('hidden')}
+const dashboardCard=$('dashboardCard'),logoutBtn=$('logoutBtn');
+const adminLinkTop=$('adminLinkTop');
+const topAccountChip=$('topAccountChip'),sidebarWorkspaceLabel=$('sidebarWorkspaceLabel');
+const accountMsg=$('accountMsg'),accountErr=$('accountErr');
+const newKeyBox=$('newKeyBox'),newKeyCallout=$('newKeyCallout');
+const createKeyPanel=$('createKeyPanel'),openCreateKeyBtn=$('openCreateKeyBtn'),cancelCreateKeyBtn=$('cancelCreateKeyBtn');
+let initialAccountDataUsed = false;
+let latestCreatedApiKey = '';
+function show(el,msg){ if(!el) return; el.textContent=msg; el.classList.remove('hidden'); }
+function hide(el){ if(!el) return; el.textContent=''; el.classList.add('hidden'); }
+function syncNewKeyCallout(){
+  if(!newKeyCallout || !newKeyBox) return;
+  if(latestCreatedApiKey){
+    newKeyBox.textContent = latestCreatedApiKey;
+    newKeyCallout.classList.remove('hidden');
+    return;
+  }
+  newKeyBox.textContent = '';
+  newKeyCallout.classList.add('hidden');
+}
+function applyAccountIdentity(me){
+  if(!me) return;
+  topAccountChip.textContent = me.email + (me.isAdmin ? i18n.adminSuffix : '');
+  setSidebarWorkspaceLabel(me.email);
+  if(me.isAdmin){
+    if(adminLinkTop) adminLinkTop.classList.remove('hidden');
+  }else{
+    if(adminLinkTop) adminLinkTop.classList.add('hidden');
+  }
+}
+function setSidebarWorkspaceLabel(value){
+  if(!sidebarWorkspaceLabel) return;
+  sidebarWorkspaceLabel.textContent = value || i18n.guestLabel || 'Guest';
+}
+function setCreateKeyPanelOpen(open){
+  if(!createKeyPanel) return;
+  createKeyPanel.classList.toggle('show', !!open);
+  if(open){
+    const input = $('keyName');
+    if(input) input.focus();
+  }
+}
+function escapeHtml(value){
+  return String(value ?? '').replace(/[&<>"']/g,(char)=>({
+    '&':'&amp;',
+    '<':'&lt;',
+    '>':'&gt;',
+    '"':'&quot;',
+    "'":'&#39;'
+  }[char]));
+}
 async function api(path,init){
   const res=await fetch(path,{credentials:'same-origin',...init});
   const data=await res.json().catch(()=>null);
   if(!res.ok) throw new Error(data?.error||('HTTP '+res.status));
   return data;
 }
+function accountMePath(){
+  if(PAGE_KEY === 'overview' || PAGE_KEY === 'storage') return '/api/account/me?detail=summary';
+  if(PAGE_KEY === 'api-keys') return '/api/account/me?detail=api-keys';
+  return '/api/account/me?detail=basic';
+}
+function formatNumber(value){
+  return new Intl.NumberFormat('en-US').format(Number(value||0));
+}
+function formatSize(value){
+  const size = Number(value || 0);
+  if(!Number.isFinite(size) || size <= 0) return '0 B';
+  if(size >= 1024 * 1024 * 1024) return (size / 1024 / 1024 / 1024).toFixed(2) + ' GB';
+  if(size >= 1024 * 1024) return (size / 1024 / 1024).toFixed(2) + ' MB';
+  if(size >= 1024) return (size / 1024).toFixed(2) + ' KB';
+  return size + ' B';
+}
+function formatDate(value){
+  if(!value) return '-';
+  const date = new Date(value);
+  if(Number.isNaN(date.getTime())) return escapeHtml(value);
+  return date.toLocaleString('en-US',{year:'numeric',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',hour12:false});
+}
+function formatRelative(value){
+  if(!value) return i18n.activityNever;
+  const date = new Date(value);
+  if(Number.isNaN(date.getTime())) return escapeHtml(value);
+  const diffMs = Date.now() - date.getTime();
+  if(diffMs < 60 * 1000) return i18n.lastActiveNow;
+  const diffMin = Math.floor(diffMs / (60 * 1000));
+  if(diffMin < 60) return diffMin + ' min ago';
+  const diffHour = Math.floor(diffMin / 60);
+  if(diffHour < 24) return diffHour + ' hr ago';
+  const diffDay = Math.floor(diffHour / 24);
+  if(diffDay < 30) return diffDay + ' day' + (diffDay === 1 ? '' : 's') + ' ago';
+  const diffMonth = Math.floor(diffDay / 30);
+  if(diffMonth < 12) return diffMonth + ' month' + (diffMonth === 1 ? '' : 's') + ' ago';
+  const diffYear = Math.floor(diffMonth / 12);
+  return diffYear + ' year' + (diffYear === 1 ? '' : 's') + ' ago';
+}
+function statusClass(status){
+  return status === 'disabled' ? 'disabled' : 'active';
+}
+function metricCard(label, value, subtle){
+  return '<div class="metric-card"><div class="k">' + escapeHtml(label) + '</div><div class="v">' + value + '</div>' + (subtle ? '<div class="s">' + subtle + '</div>' : '') + '</div>';
+}
+function renderOverview(me){
+  const el = $('overviewStats');
+  if(!el) return;
+  const summary = me.summary || {};
+  el.innerHTML =
+    '<div class="stat-card"><div class="stat-label">API Keys</div><div class="stat-value">' + formatNumber(summary.apiKeyCount) + '</div><div class="muted">active ' + formatNumber(summary.activeApiKeyCount) + '</div></div>' +
+    '<div class="stat-card"><div class="stat-label">Files</div><div class="stat-value">' + formatNumber(summary.fileCount) + '</div><div class="muted">' + formatSize(summary.fileBytes) + '</div></div>' +
+    '<div class="stat-card"><div class="stat-label">Sites</div><div class="stat-value">' + formatNumber(summary.siteCount) + '</div><div class="muted">active ' + formatNumber(summary.activeSiteCount) + '</div></div>' +
+    '<div class="stat-card"><div class="stat-label">Uploads</div><div class="stat-value">' + formatNumber(summary.uploadedCountTotal) + '</div><div class="muted">from your API Keys</div></div>';
+}
+function renderProfile(me){
+  const el = $('profileGrid');
+  if(!el) return;
+  el.innerHTML =
+    metricCard('Email', escapeHtml(me.email || '-'), 'Primary sign-in address') +
+    metricCard(i18n.userId, '<code>' + escapeHtml(me.userId || '-') + '</code>', 'Stable account identifier') +
+    metricCard(i18n.accountRole, escapeHtml(me.isAdmin ? i18n.roleAdmin : i18n.roleUser), 'Derived from current account access') +
+    metricCard(i18n.registeredAt, escapeHtml(formatDate(me.createdAt)), escapeHtml(formatRelative(me.createdAt))) +
+    metricCard(i18n.verifiedAt, escapeHtml(formatDate(me.verifiedAt)), me.verifiedAt ? 'Email verification completed' : 'Not verified yet') +
+    metricCard(i18n.lastLoginAt, escapeHtml(formatDate(me.lastLoginAt)), escapeHtml(formatRelative(me.lastLoginAt)));
+}
+function renderStorage(me){
+  const el = $('storageGrid');
+  if(!el) return;
+  const summary = me.summary || {};
+  el.innerHTML =
+    metricCard(i18n.fileStorage, formatSize(summary.fileBytes), formatNumber(summary.fileCount) + ' files') +
+    metricCard(i18n.siteStorage, formatSize(summary.siteBytes), formatNumber(summary.siteCount) + ' sites') +
+    metricCard('Uploaded via API Keys', formatNumber(summary.uploadedCountTotal), 'Successful uploads recorded on your keys') +
+    metricCard('Active Keys', formatNumber(summary.activeApiKeyCount), formatNumber(summary.disabledApiKeyCount) + ' disabled');
+}
 function renderKeys(keys){
-  $('keyList').innerHTML = keys.length ? keys.map((item)=>\`
-    <div class="key-item">
-      <div class="row"><strong>\${item.name}</strong><span class="badge">\${item.status}</span></div>
-      <div class="muted mono" style="margin-top:8px">\${item.keyPrefix}...</div>
-      <div class="muted" style="margin-top:8px">\${i18n.rateLimit}: \${item.limitPreparePerWindow} / \${item.limitPrepareWindowSec}s</div>
-      <div class="muted">\${i18n.uploadQuota}: \${item.uploadedCountTotal} / \${item.limitUploadCountTotal}</div>
-      <div class="muted">\${i18n.createdAt}: \${item.createdAt}</div>
-    </div>\`).join('') : '<div class="muted">' + i18n.noKeys + '</div>';
+  const el = $('keyList');
+  if(!el) return;
+  if(!keys.length){
+    el.innerHTML = '<div class="empty-state"><strong>' + i18n.noKeys + '</strong><div>Create your first key to start using the OkFile API from scripts, agents, or local tools.</div></div>';
+    return;
+  }
+  el.innerHTML = \`
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>\${i18n.permissions}</th>
+          <th>\${i18n.tokenPrefix}</th>
+          <th>\${i18n.created}</th>
+          <th>\${i18n.lastUsedAt}</th>
+          <th>\${i18n.status}</th>
+          <th>\${i18n.actions}</th>
+        </tr>
+      </thead>
+      <tbody>
+        \${keys.map((item)=>\`
+          <tr>
+            <td>
+              <div class="cell-stack">
+                <div class="token-name">
+                  <strong>\${escapeHtml(item.name || 'Default API Key')}</strong>
+                </div>
+                <div class="subtle">\${i18n.rateLimit}: \${formatNumber(item.limitPreparePerWindow)} / \${formatNumber(item.limitPrepareWindowSec)}s</div>
+                <div class="subtle">\${i18n.uploadQuota}: \${formatNumber(item.uploadedCountTotal)} / \${formatNumber(item.limitUploadCountTotal)}</div>
+              </div>
+            </td>
+            <td>
+              <div class="perm-summary">
+                <strong>OkFile API</strong>
+                <div class="subtle">Scoped for OkFile upload, quick upload, complete, status, and site publish flows</div>
+              </div>
+            </td>
+            <td>
+              <div class="cell-stack">
+                <div class="mono">\${escapeHtml(item.keyPrefix)}...</div>
+                <div class="subtle">Visible prefix only</div>
+              </div>
+            </td>
+            <td>
+              <div class="cell-stack">
+                <div>\${formatDate(item.createdAt)}</div>
+                <div class="subtle">\${formatRelative(item.createdAt)}</div>
+              </div>
+            </td>
+            <td>
+              <div class="cell-stack">
+                <div>\${item.lastUsedAt ? formatDate(item.lastUsedAt) : i18n.activityNever}</div>
+                <div class="subtle">\${formatRelative(item.lastUsedAt)}</div>
+              </div>
+            </td>
+            <td><span class="status-pill \${statusClass(item.status)}">\${escapeHtml(item.status === 'disabled' ? 'Disabled' : 'Active')}</span></td>
+            <td>
+              \${renderKeyActionsMenu(item)}
+            </td>
+          </tr>
+        \`).join('')}
+      </tbody>
+    </table>\`;
+  document.querySelectorAll('[data-toggle-key]').forEach((btn)=>{
+    btn.onclick = async () => {
+      closeAccountActionMenus();
+      hide(accountMsg); hide(accountErr);
+      const originalText = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = i18n.toggleBusy;
+      try{
+        await api('/api/account/api-keys/' + btn.getAttribute('data-toggle-key'),{
+          method:'PATCH',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({status:btn.getAttribute('data-next-status')})
+        });
+        show(accountMsg,i18n.toggleSuccess);
+        await loadMe();
+      }catch(error){
+        show(accountErr,error.message);
+      }finally{
+        btn.disabled = false;
+        btn.textContent = originalText;
+      }
+    };
+  });
+  document.querySelectorAll('[data-delete-key]').forEach((btn)=>{
+    btn.onclick = async () => {
+      closeAccountActionMenus();
+      if(!confirm(i18n.deleteConfirm)) return;
+      hide(accountMsg); hide(accountErr);
+      const originalText = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = i18n.deleteBusy;
+      try{
+        await api('/api/account/api-keys/' + btn.getAttribute('data-delete-key'),{method:'DELETE'});
+        show(accountMsg,i18n.deleteSuccess);
+        await loadMe();
+      }catch(error){
+        show(accountErr,error.message);
+      }finally{
+        btn.disabled = false;
+        btn.textContent = originalText;
+      }
+    };
+  });
+}
+function renderAccountActionsMenu(items){
+  return '<div class="account-actions" data-account-actions>' +
+    '<button class="account-actions-toggle" type="button" data-account-menu-toggle aria-label="Open actions menu">...</button>' +
+    '<div class="account-actions-menu">' + items.join('') + '</div>' +
+  '</div>';
+}
+function renderKeyActionsMenu(item){
+  return renderAccountActionsMenu([
+    '<button class="account-action-item" type="button" data-toggle-key="' + escapeHtml(item.id) + '" data-next-status="' + escapeHtml(item.status === 'disabled' ? 'active' : 'disabled') + '">' + escapeHtml(item.status === 'disabled' ? i18n.toggleEnable : i18n.toggleDisable) + '</button>',
+    '<div class="account-actions-divider"></div>',
+    '<button class="account-action-item danger" type="button" data-delete-key="' + escapeHtml(item.id) + '">' + escapeHtml(i18n.deleteKey) + '</button>'
+  ]);
+}
+function renderFileActionsMenu(item){
+  const openUrl = item.viewUrl || item.playUrl || '';
+  const items = [];
+  if(openUrl) items.push('<a class="account-action-item" href="' + escapeHtml(openUrl) + '" target="_blank" rel="noopener">' + escapeHtml(i18n.openFile) + '</a>');
+  if(item.downloadUrl) items.push('<a class="account-action-item" href="' + escapeHtml(item.downloadUrl) + '" target="_blank" rel="noopener">' + escapeHtml(i18n.downloadFile) + '</a>');
+  if(items.length) items.push('<div class="account-actions-divider"></div>');
+  items.push('<button class="account-action-item danger" type="button" data-delete-file="' + escapeHtml(item.id) + '">' + escapeHtml(i18n.deleteFile) + '</button>');
+  return renderAccountActionsMenu(items);
+}
+function renderSiteActionsMenu(item){
+  const items = [];
+  if(item.siteUrl){
+    items.push('<a class="account-action-item" href="' + escapeHtml(item.siteUrl) + '" target="_blank" rel="noopener">' + escapeHtml(i18n.openSite) + '</a>');
+    items.push('<div class="account-actions-divider"></div>');
+  }
+  items.push('<button class="account-action-item danger" type="button" data-delete-site="' + escapeHtml(item.id) + '">' + escapeHtml(i18n.deleteSite) + '</button>');
+  return renderAccountActionsMenu(items);
+}
+function closeAccountActionMenus(exceptMenu){
+  document.querySelectorAll('[data-account-actions].open').forEach((menu)=>{
+    if(exceptMenu && menu === exceptMenu) return;
+    menu.classList.remove('open');
+    menu.classList.remove('drop-up');
+  });
+}
+function syncAccountActionMenuDirection(menu){
+  if(!menu) return;
+  const popup = menu.querySelector('.account-actions-menu');
+  if(!popup) return;
+  menu.classList.remove('drop-up');
+  const hostCard = menu.closest('.section-card');
+  const cardRect = hostCard ? hostCard.getBoundingClientRect() : null;
+  const toggleRect = menu.getBoundingClientRect();
+  const popupHeight = popup.offsetHeight || 0;
+  const availableBottom = Math.min(window.innerHeight, cardRect ? cardRect.bottom : window.innerHeight);
+  const availableTop = Math.max(0, cardRect ? cardRect.top : 0);
+  const spaceBelow = availableBottom - toggleRect.bottom - 12;
+  const spaceAbove = toggleRect.top - availableTop - 12;
+  if(popupHeight > spaceBelow && spaceAbove > spaceBelow){
+    menu.classList.add('drop-up');
+  }
+}
+function renderFiles(files){
+  const el = $('fileList');
+  if(!el) return;
+  if(!files.length){
+    el.innerHTML = '<div class="empty-state"><strong>' + i18n.filesEmpty + '</strong><div>Upload a file from the browser or API and it will appear here.</div></div>';
+    return;
+  }
+  el.innerHTML = '<table><thead><tr><th>File</th><th>Type</th><th>Size</th><th>Published / Source</th><th>Actions</th></tr></thead><tbody>' + files.map((item)=>{
+    const sourceParts = [];
+    if (item.clientIp) sourceParts.push('IP ' + item.clientIp);
+    if (item.clientRegion) sourceParts.push('Region ' + item.clientRegion);
+    const fileLabel = item.fileName || item.id;
+    const fileTitle = item.viewUrl
+      ? '<a href="' + escapeHtml(item.viewUrl) + '" target="_blank" rel="noopener"><strong>' + escapeHtml(fileLabel) + '</strong></a>'
+      : '<strong>' + escapeHtml(fileLabel) + '</strong>';
+    return '<tr>' +
+      '<td><div class="cell-stack">' + fileTitle + '<div class="subtle mono">' + escapeHtml(item.id) + '</div></div></td>' +
+      '<td>' + escapeHtml(item.contentType || '-') + '</td>' +
+      '<td>' + escapeHtml(formatSize(item.size)) + '</td>' +
+      '<td><div class="cell-stack"><div>' + escapeHtml(formatDate(item.createdAt)) + '</div><div class="subtle">' + escapeHtml(sourceParts.join(' | ') || '-') + '</div></div></td>' +
+      '<td>' + renderFileActionsMenu(item) + '</td>' +
+    '</tr>';
+  }).join('') + '</tbody></table>';
+}
+function renderSites(sites){
+  const el = $('siteList');
+  if(!el) return;
+  if(!sites.length){
+    el.innerHTML = '<div class="empty-state"><strong>' + i18n.sitesEmpty + '</strong><div>Publish a folder as a site and it will appear here.</div></div>';
+    return;
+  }
+  el.innerHTML = '<table><thead><tr><th>Site</th><th>Hostname</th><th>Status</th><th>Files / Size</th><th>Updated</th><th>Actions</th></tr></thead><tbody>' + sites.map((item)=>{
+    const nowExpired = item.expiresAt && new Date(item.expiresAt).getTime() <= Date.now();
+    const status = nowExpired ? 'Expired' : (item.status === 'disabled' ? 'Disabled' : 'Active');
+    const siteNameLink = item.siteUrl
+      ? '<a href="' + escapeHtml(item.siteUrl) + '" target="_blank" rel="noopener"><strong>' + escapeHtml(item.name || item.id) + '</strong></a>'
+      : '<strong>' + escapeHtml(item.name || item.id) + '</strong>';
+    const siteLabel = item.siteHostname || item.subdomain || '-';
+    const siteLink = item.siteUrl
+      ? '<a class="mono" href="' + escapeHtml(item.siteUrl) + '" target="_blank" rel="noopener">' + escapeHtml(siteLabel) + '</a>'
+      : '<div class="mono">' + escapeHtml(siteLabel) + '</div>';
+    return '<tr>' +
+      '<td><div class="cell-stack">' + siteNameLink + '<div class="subtle mono">' + escapeHtml(item.id) + '</div></div></td>' +
+      '<td><div class="cell-stack">' + siteLink + '<div class="subtle">' + escapeHtml(item.siteUrl || '-') + '</div></div></td>' +
+      '<td><span class="status-pill ' + (status === 'Expired' ? 'disabled' : 'active') + '">' + escapeHtml(status) + '</span></td>' +
+      '<td><div class="cell-stack"><div>' + formatNumber(item.fileCount) + '</div><div class="subtle">' + escapeHtml(formatSize(item.totalSize)) + '</div></div></td>' +
+      '<td><div class="cell-stack"><div>' + escapeHtml(formatDate(item.updatedAt || item.completedAt || item.createdAt)) + '</div><div class="subtle">' + escapeHtml(item.publishOrigin || '-') + '</div></div></td>' +
+      '<td>' + renderSiteActionsMenu(item) + '</td>' +
+    '</tr>';
+  }).join('') + '</tbody></table>';
+  document.querySelectorAll('[data-delete-site]').forEach((btn)=>{
+    btn.onclick = async () => {
+      closeAccountActionMenus();
+      if(!confirm(i18n.deleteSiteConfirm)) return;
+      hide(accountMsg); hide(accountErr);
+      const originalText = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = i18n.deleteSiteBusy;
+      try{
+        await api('/api/account/sites/' + btn.getAttribute('data-delete-site'),{method:'DELETE'});
+        show(accountMsg,i18n.deleteSiteSuccess);
+        await loadMe();
+      }catch(error){
+        show(accountErr,error.message);
+      }finally{
+        btn.disabled = false;
+        btn.textContent = originalText;
+      }
+    };
+  });
+}
+document.addEventListener('click',(event)=>{
+  const toggle = event.target.closest('[data-account-menu-toggle]');
+  if(toggle){
+    const menu = toggle.closest('[data-account-actions]');
+    const willOpen = !menu.classList.contains('open');
+    closeAccountActionMenus(menu);
+    menu.classList.toggle('open', willOpen);
+    if(willOpen) syncAccountActionMenuDirection(menu);
+    return;
+  }
+  const btn = event.target.closest('[data-delete-file]');
+  if(btn){
+    event.preventDefault();
+    closeAccountActionMenus();
+    (async ()=>{
+      if(!confirm(i18n.deleteFileConfirm)) return;
+      hide(accountMsg); hide(accountErr);
+      const originalText = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = i18n.deleteFileBusy;
+      try{
+        await api('/api/account/files/' + btn.getAttribute('data-delete-file'),{method:'DELETE'});
+        show(accountMsg,i18n.deleteFileSuccess);
+        await loadMe();
+      }catch(error){
+        show(accountErr,error.message);
+      }finally{
+        btn.disabled = false;
+        btn.textContent = originalText;
+      }
+    })();
+    return;
+  }
+  if(!event.target.closest('[data-account-actions]')){
+    closeAccountActionMenus();
+  }
+});
+async function loadFiles(){
+  try{
+    const data = await api('/api/account/files');
+    renderFiles(data.files || []);
+  }catch(error){
+    const el = $('fileList');
+    if(el) el.innerHTML = '<div class="empty-state"><strong>Failed to load files</strong><div>' + escapeHtml(error.message) + '</div></div>';
+  }
+}
+async function loadSites(){
+  try{
+    const data = await api('/api/account/sites');
+    renderSites(data.sites || []);
+  }catch(error){
+    const el = $('siteList');
+    if(el) el.innerHTML = '<div class="empty-state"><strong>Failed to load sites</strong><div>' + escapeHtml(error.message) + '</div></div>';
+  }
 }
 async function loadMe(){
   try{
-    const me=await api('/api/account/me');
-    authCard.classList.add('hidden');
-    dashboardCard.classList.remove('hidden');
-    logoutBtn.classList.remove('hidden');
-    if(me.isAdmin) adminLink.classList.remove('hidden');
-    $('userSummary').textContent = i18n.currentUserPrefix + me.email + (me.isAdmin ? i18n.adminSuffix : '');
-    renderKeys(me.apiKeys || []);
-  }catch{
-    authCard.classList.remove('hidden');
-    dashboardCard.classList.add('hidden');
-    logoutBtn.classList.add('hidden');
-    adminLink.classList.add('hidden');
+    const me = (!initialAccountDataUsed && INITIAL_ACCOUNT_DATA)
+      ? (initialAccountDataUsed = true, INITIAL_ACCOUNT_DATA)
+      : await api(accountMePath());
+    applyAccountIdentity(me);
+    if(PAGE_KEY === 'overview') renderOverview(me);
+    if(PAGE_KEY === 'profile') renderProfile(me);
+    if(PAGE_KEY === 'storage') renderStorage(me);
+    if(PAGE_KEY === 'api-keys') renderKeys(me.apiKeys || []);
+    if(PAGE_KEY === 'files') await loadFiles();
+    if(PAGE_KEY === 'sites') await loadSites();
+  }catch(error){
+    if(String(error?.message || '').includes('Please sign in first')){
+      location.href = LOGIN_PATH + '?next=' + encodeURIComponent(location.pathname + location.search + location.hash);
+      return;
+    }
+    if(adminLinkTop) adminLinkTop.classList.add('hidden');
+    show(accountErr,error?.message || 'Failed to load account data');
   }
 }
-$('sendLinkBtn').onclick = async () => {
-  hide(authMsg); hide(authErr);
-  try{
-    await api('/api/auth/request-link',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:$('email').value})});
-    show(authMsg,i18n.sendSuccess);
-  }catch(error){
-    show(authErr,error.message);
-  }
+if(openCreateKeyBtn) openCreateKeyBtn.onclick = () => {
+  hide(accountMsg); hide(accountErr);
+  latestCreatedApiKey = '';
+  syncNewKeyCallout();
+  setCreateKeyPanelOpen(true);
 };
-$('createKeyBtn').onclick = async () => {
-  hide(createMsg); hide(createErr); hide(newKeyBox);
+if(cancelCreateKeyBtn) cancelCreateKeyBtn.onclick = () => {
+  hide(accountMsg); hide(accountErr);
+  latestCreatedApiKey = '';
+  syncNewKeyCallout();
+  if($('keyName')) $('keyName').value='';
+  setCreateKeyPanelOpen(false);
+};
+const createKeyBtn = $('createKeyBtn');
+if(createKeyBtn) createKeyBtn.onclick = async () => {
+  hide(accountMsg); hide(accountErr);
+  latestCreatedApiKey = '';
+  syncNewKeyCallout();
   try{
     const data=await api('/api/account/api-keys',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:$('keyName').value})});
-    show(createMsg,i18n.createSuccess);
-    show(newKeyBox,data.apiKey);
-    $('keyName').value='';
+    show(accountMsg,i18n.createSuccess);
+    latestCreatedApiKey = String(data?.apiKey || '');
+    syncNewKeyCallout();
+    if($('keyName')) $('keyName').value='';
+    setCreateKeyPanelOpen(true);
     await loadMe();
   }catch(error){
-    show(createErr,error.message);
+    show(accountErr,error.message);
   }
 };
-logoutBtn.onclick = async () => {
+if(logoutBtn) logoutBtn.onclick = async () => {
   await fetch('/api/auth/logout',{method:'POST',credentials:'same-origin'});
-  location.reload();
+  location.href = LOGIN_PATH;
 };
-loadMe();`
-    ,
-    { lang: isEn ? 'en' : 'zh-CN' }
+if(INITIAL_ACCOUNT_DATA && (PAGE_KEY === 'files' || PAGE_KEY === 'sites')){
+  applyAccountIdentity(INITIAL_ACCOUNT_DATA);
+}
+loadMe();`,
+    { lang: 'en' }
   );
 }
 
 function adminPage() {
   return accountShell(
-    'OkFile 管理后台',
+    'OkFile Admin',
     `<div class="topbar">
       <a class="brand" href="/">Ok<span>File</span></a>
       <div class="nav">
-        <a href="/account">账户中心</a>
-        <a href="/zh/upload/">人工上载</a>
+        <a href="/account">Account</a>
+        <a href="/en/upload/">Manual Upload</a>
       </div>
     </div>
-    <div class="card">
-      <h1>管理员后台</h1>
-      <p class="muted">这里可以查看注册用户、注册时间，按 API Key 设置频率限制和总上载次数限制，并手动清理已过期文件。仅 <code>ADMIN_EMAILS</code> 白名单中的邮箱可访问。</p>
-      <div class="msg hidden" id="adminMsg"></div>
-      <div class="err hidden" id="adminErr"></div>
-      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:16px 0 18px">
-        <label class="muted" for="cleanupLimit">本次检查数量</label>
-        <input id="cleanupLimit" type="number" min="1" max="1000" value="200" style="width:120px">
-        <button class="btn-primary" id="cleanupBtn">立即清理过期文件</button>
-        <span class="muted" id="cleanupResult">尚未执行清理</span>
+    <div class="stack">
+      <div class="card hero-card">
+        <div class="hero-top">
+          <div class="hero-copy">
+            <h1>Admin Console</h1>
+            <p class="muted">Review registered users, manage API Key status and quotas, and run cleanup for expired files. This page follows the same control-plane layout as the account key manager, with summary cards, direct actions, and a management table.</p>
+            <div class="meta-line">
+              <span class="meta-pill">Admin access required</span>
+              <span class="meta-pill">Configured by <code>ADMIN_EMAILS</code></span>
+            </div>
+          </div>
+        </div>
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-label">Rows</div>
+            <div class="stat-value" id="adminStatRows">0</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Keys</div>
+            <div class="stat-value" id="adminStatKeys">0</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Active</div>
+            <div class="stat-value" id="adminStatActive">0</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Disabled</div>
+            <div class="stat-value" id="adminStatDisabled">0</div>
+          </div>
+        </div>
+        <div class="msg hidden" id="adminMsg"></div>
+        <div class="err hidden" id="adminErr"></div>
       </div>
-      <div id="adminTableWrap" class="muted">正在加载...</div>
+
+      <div class="card section-card">
+        <div class="section-head">
+          <div>
+            <h2>Expired File Cleanup</h2>
+            <p class="muted">Run a bounded cleanup batch against expired file metadata and delete any matching R2 objects that are already past their expiration time.</p>
+          </div>
+        </div>
+        <div class="section-body">
+          <div class="inline-grid">
+            <div class="field" style="margin-top:0">
+              <label for="cleanupLimit">Batch size</label>
+              <input id="cleanupLimit" type="number" min="1" max="1000" value="200">
+            </div>
+            <button class="btn-primary" id="cleanupBtn">Clean Up Expired Files</button>
+          </div>
+          <div class="note" id="cleanupResult" style="margin-top:16px">Cleanup has not run yet</div>
+        </div>
+      </div>
+
+      <div class="card section-card">
+        <div class="section-head">
+          <div>
+            <h2>Account API Keys</h2>
+            <p class="muted">Inspect every registered user and API Key in one table. Adjust status, prepare limits, window size, and upload quota, then save changes inline.</p>
+          </div>
+      </div>
+        <div class="table-toolbar">
+          <div class="toolbar-copy subtle">Each row represents either a user without a key yet or an existing API Key that can be activated, disabled, or quota-adjusted.</div>
+        </div>
+        <div class="table-wrap" id="adminTableWrap"><div class="empty-state"><strong>Loading admin data...</strong><div>Please wait while OkFile loads account and API Key records.</div></div></div>
+      </div>
     </div>`,
     `const $=(id)=>document.getElementById(id);
 function show(el,msg){el.textContent=msg;el.classList.remove('hidden')}
 function hide(el){el.textContent='';el.classList.add('hidden')}
+function escapeHtml(value){
+  return String(value ?? '').replace(/[&<>"']/g,(char)=>({
+    '&':'&amp;',
+    '<':'&lt;',
+    '>':'&gt;',
+    '"':'&quot;',
+    "'":'&#39;'
+  }[char]));
+}
 function formatTime(value){
   if(!value) return '-';
   const d=new Date(value);
   if(Number.isNaN(d.getTime())) return value;
-  return d.toLocaleString('zh-CN',{hour12:false});
+  return d.toLocaleString('en-US',{year:'numeric',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',hour12:false});
+}
+function formatNumber(value){
+  return new Intl.NumberFormat('en-US').format(Number(value||0));
 }
 async function api(path,init){
   const res=await fetch(path,{credentials:'same-origin',...init});
@@ -1079,9 +2042,19 @@ async function api(path,init){
   if(!res.ok) throw new Error(data?.error||('HTTP '+res.status));
   return data;
 }
+function setSummary(items){
+  const rows = items.length;
+  const keyed = items.filter((item)=>item.hasApiKey);
+  const active = keyed.filter((item)=>item.status === 'active').length;
+  const disabled = keyed.filter((item)=>item.status === 'disabled').length;
+  $('adminStatRows').textContent = formatNumber(rows);
+  $('adminStatKeys').textContent = formatNumber(keyed.length);
+  $('adminStatActive').textContent = formatNumber(active);
+  $('adminStatDisabled').textContent = formatNumber(disabled);
+}
 function setCleanupBusy(busy){
   $('cleanupBtn').disabled = busy;
-  $('cleanupBtn').textContent = busy ? '清理中...' : '立即清理过期文件';
+  $('cleanupBtn').textContent = busy ? 'Cleaning...' : 'Clean Up Expired Files';
 }
 async function runCleanup(){
   hide($('adminErr')); hide($('adminMsg'));
@@ -1089,19 +2062,19 @@ async function runCleanup(){
   const limit = Math.max(1, Math.min(rawLimit, 1000));
   $('cleanupLimit').value = String(limit);
   setCleanupBusy(true);
-  $('cleanupResult').textContent = '正在执行清理...';
+  $('cleanupResult').textContent = 'Running cleanup...';
   try{
     const data = await api('/api/admin/cleanup-expired',{
       method:'POST',
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify({limit})
     });
-    const extra = data.truncated && data.cursor ? '，还有下一批待处理' : '';
-    $('cleanupResult').textContent = '已检查 ' + data.checked + ' 个，删除 ' + data.deleted + ' 个' + extra;
-    show($('adminMsg'),'过期文件清理完成');
+    const extra = data.truncated && data.cursor ? ', more batches remain' : '';
+    $('cleanupResult').textContent = 'Checked ' + data.checked + ', deleted ' + data.deleted + extra;
+    show($('adminMsg'),'Expired file cleanup completed');
     await load();
   }catch(error){
-    $('cleanupResult').textContent = '清理失败';
+    $('cleanupResult').textContent = 'Cleanup failed';
     show($('adminErr'),error.message);
   }finally{
     setCleanupBusy(false);
@@ -1110,37 +2083,37 @@ async function runCleanup(){
 function row(item){
   if(!item.hasApiKey){
     return '<tr>' +
-      '<td>' + item.ownerEmail + '</td>' +
-      '<td>' + formatTime(item.userCreatedAt) + '</td>' +
-      '<td><span class="muted">未生成 API Key</span></td>' +
-      '<td><span class="muted">-</span></td>' +
-      '<td><span class="muted">-</span></td>' +
-      '<td><span class="muted">-</span></td>' +
-      '<td><span class="muted">-</span></td>' +
-      '<td><span class="muted">-</span></td>' +
-      '<td><span class="muted">等待用户创建</span></td>' +
+      '<td><div class="cell-stack"><strong>' + escapeHtml(item.ownerEmail) + '</strong><div class="subtle">Registered ' + formatTime(item.userCreatedAt) + '</div></div></td>' +
+      '<td><div class="perm-summary"><strong>No API Key yet</strong><div class="subtle">This user has an account but has not created any personal API Key.</div></div></td>' +
+      '<td><span class="subtle">-</span></td>' +
+      '<td><span class="subtle">-</span></td>' +
+      '<td><span class="subtle">-</span></td>' +
+      '<td><span class="subtle">-</span></td>' +
+      '<td><span class="subtle">Waiting for user action</span></td>' +
     '</tr>';
   }
   return '<tr>' +
-    '<td>' + item.ownerEmail + '</td>' +
-    '<td>' + formatTime(item.userCreatedAt) + '</td>' +
-    '<td>' + item.name + '<div class="muted mono">' + item.keyPrefix + '...</div></td>' +
+    '<td><div class="cell-stack"><strong>' + escapeHtml(item.ownerEmail) + '</strong><div class="subtle">Registered ' + formatTime(item.userCreatedAt) + '</div></div></td>' +
+    '<td><div class="cell-stack"><div class="token-name"><strong>' + escapeHtml(item.name) + '</strong><span class="status-pill ' + (item.status === 'disabled' ? 'disabled' : 'active') + '">' + escapeHtml(item.status === 'disabled' ? 'Disabled' : 'Active') + '</span></div><div class="mono">' + escapeHtml(item.keyPrefix) + '...</div></div></td>' +
     '<td><select data-field="status" data-id="' + item.id + '"><option value="active"' + (item.status==='active'?' selected':'') + '>active</option><option value="disabled"' + (item.status==='disabled'?' selected':'') + '>disabled</option></select></td>' +
-    '<td><input data-field="limitPreparePerWindow" data-id="' + item.id + '" type="number" min="1" value="' + item.limitPreparePerWindow + '"></td>' +
-    '<td><input data-field="limitPrepareWindowSec" data-id="' + item.id + '" type="number" min="60" value="' + item.limitPrepareWindowSec + '"></td>' +
-    '<td><input data-field="limitUploadCountTotal" data-id="' + item.id + '" type="number" min="1" value="' + item.limitUploadCountTotal + '"></td>' +
-    '<td>' + item.uploadedCountTotal + '</td>' +
-    '<td><button class="btn-primary" data-save="' + item.id + '">保存</button></td>' +
+    '<td><div class="cell-stack"><input data-field="limitPreparePerWindow" data-id="' + item.id + '" type="number" min="1" value="' + item.limitPreparePerWindow + '"><div class="subtle">requests / window</div></div></td>' +
+    '<td><div class="cell-stack"><input data-field="limitPrepareWindowSec" data-id="' + item.id + '" type="number" min="60" value="' + item.limitPrepareWindowSec + '"><div class="subtle">window seconds</div></div></td>' +
+    '<td><div class="cell-stack"><input data-field="limitUploadCountTotal" data-id="' + item.id + '" type="number" min="1" value="' + item.limitUploadCountTotal + '"><div class="subtle">uploaded ' + formatNumber(item.uploadedCountTotal) + '</div></div></td>' +
+    '<td><div class="actions-cell"><button class="btn-primary" data-save="' + item.id + '">Save Changes</button></div></td>' +
   '</tr>';
 }
 async function load(){
   hide($('adminErr')); hide($('adminMsg'));
   try{
     const data=await api('/api/admin/api-keys');
-    $('adminTableWrap').innerHTML = '<table><thead><tr><th>用户</th><th>注册时间</th><th>API Key</th><th>状态</th><th>频率次数</th><th>频率窗口(秒)</th><th>上载上限</th><th>已上载</th><th>操作</th></tr></thead><tbody>' + data.apiKeys.map(row).join('') + '</tbody></table>';
+    setSummary(data.apiKeys || []);
+    $('adminTableWrap').innerHTML = '<table><thead><tr><th>User</th><th>API Key</th><th>Status</th><th>Prepare Limit</th><th>Window</th><th>Upload Quota</th><th>Action</th></tr></thead><tbody>' + (data.apiKeys || []).map(row).join('') + '</tbody></table>';
     document.querySelectorAll('[data-save]').forEach((btn)=>{
       btn.onclick = async () => {
         const id = btn.getAttribute('data-save');
+        const originalText = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = 'Saving...';
         try{
           await api('/api/admin/api-keys/' + id,{
             method:'POST',
@@ -1152,15 +2125,18 @@ async function load(){
               limitUploadCountTotal:Number(document.querySelector('[data-field="limitUploadCountTotal"][data-id="' + id + '"]').value)
             })
           });
-          show($('adminMsg'),'保存成功');
+          show($('adminMsg'),'Saved successfully');
           await load();
         }catch(error){
           show($('adminErr'),error.message);
+        }finally{
+          btn.disabled = false;
+          btn.textContent = originalText;
         }
       };
     });
   }catch(error){
-    $('adminTableWrap').innerHTML = '';
+    $('adminTableWrap').innerHTML = '<div class="empty-state"><strong>Failed to load admin data</strong><div>' + escapeHtml(error.message) + '</div></div>';
     show($('adminErr'),error.message);
   }
 }
@@ -1169,94 +2145,142 @@ load();`
   );
 }
 
-function notFoundHTML(id) {
-  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>404 - OkFile</title>
+function publicInfoPageHTML({ title, icon, heading, body, tone = 'danger' }) {
+  const toneClass = escapeHtml(tone);
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${escapeHtml(title)} - OkFile</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#0a0a0a;color:#fff;display:flex;align-items:center;justify-content:center;min-height:100vh}.wrap{text-align:center;padding:24px}.icon{font-size:64px;margin-bottom:20px}h1{font-size:24px;font-weight:600;margin-bottom:12px;color:#ef4444}p{color:#888;font-size:14px;margin-bottom:24px}a{color:#60a5fa;text-decoration:none;border:1px solid #333;padding:8px 20px;border-radius:8px;display:inline-block}a:hover{border-color:#60a5fa}</style></head>
-<body><div class="wrap"><div class="icon">📭</div><h1>文件不存在</h1><p>文件 <code>${escapeHtml(id)}</code> 未找到</p><a href="/">返回 OkFile 首页</a></div></body></html>`;
+<meta name="theme-color" content="#f5f7fb">
+<style>*{box-sizing:border-box;margin:0;padding:0}html{background:#f5f7fb}body{font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:linear-gradient(180deg,#f7f9fc 0%,#eef3f9 100%);color:#0f172a;min-height:100vh}.topbar{position:sticky;top:0;z-index:20;background:rgba(247,249,252,.92);backdrop-filter:blur(14px);border-bottom:1px solid #dde6f0}.topbar-inner{width:min(1120px,100%);margin:0 auto;padding:14px 24px;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}.brand{display:inline-flex;align-items:center;gap:10px;text-decoration:none}.brand-logo{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:10px;background:linear-gradient(135deg,#f48120,#ffb347);color:#fff;font-weight:800;box-shadow:0 8px 18px rgba(244,129,32,.2)}.brand-copy strong{display:block;font-size:16px;color:#0f172a}.brand-copy span{display:block;font-size:12px;color:#64748b}.top-actions{display:flex;gap:10px;flex-wrap:wrap}.top-actions a{padding:8px 14px;border-radius:999px;border:1px solid #dce4ee;background:#fff;color:#475569;text-decoration:none;font-size:12px;box-shadow:0 1px 2px rgba(15,23,42,.04)}.top-actions a:hover{border-color:#c7d6ea;background:#f8fafc;color:#0f172a}.wrap{width:100%;max-width:720px;margin:0 auto;padding:28px 24px}.crumbs{display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap;font-size:12px;color:#94a3b8;margin-bottom:16px}.crumbs a{color:#1d4ed8;text-decoration:none}.panel{background:#fff;border:1px solid #dce4ee;border-radius:24px;padding:36px 32px;text-align:center;box-shadow:0 18px 44px rgba(15,23,42,.08)}.badge{display:inline-flex;align-items:center;gap:8px;padding:7px 14px;border-radius:999px;background:#eff6ff;border:1px solid #dbeafe;color:#1d4ed8;font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase}.icon{font-size:52px;margin:18px 0 14px}.heading{font-size:28px;font-weight:800;line-height:1.15;margin-bottom:10px}.heading.danger{color:#b91c1c}.heading.warning{color:#c2410c}.desc{font-size:15px;line-height:1.8;color:#475569}.desc p{margin-bottom:12px}.desc code{font-family:Consolas,"SF Mono",monospace;color:#1d4ed8;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:2px 8px}.actions{margin-top:24px;display:flex;justify-content:center;gap:12px;flex-wrap:wrap}.btn{display:inline-flex;align-items:center;justify-content:center;padding:10px 18px;border-radius:12px;text-decoration:none;font-size:14px;font-weight:600;border:1px solid #dce4ee;background:#fff;color:#334155;transition:.18s}.btn:hover{border-color:#c7d6ea;background:#f8fafc;color:#0f172a}.btn-primary{background:#1d4ed8;border-color:#1d4ed8;color:#fff;box-shadow:0 10px 24px rgba(29,78,216,.14)}.btn-primary:hover{background:#1e40af;border-color:#1e40af;color:#fff}@media (max-width:640px){.topbar-inner{padding:12px 16px}.wrap{padding:20px 16px}.panel{padding:28px 20px}.heading{font-size:24px}}</style></head>
+<body><div class="topbar"><div class="topbar-inner"><a class="brand" href="/en/"><span class="brand-logo">O</span><span class="brand-copy"><strong>OkFile Console</strong><span>Status Page</span></span></a><div class="top-actions"><a href="/en/">Home</a><a href="/en/upload/">Manual Upload</a><a href="/en/account/">Account</a></div></div></div><div class="wrap"><div class="crumbs"><a href="/en/">Home</a><span>/</span><span>${escapeHtml(title)}</span></div><div class="panel"><div class="badge">OkFile Notice</div><div class="icon">${icon}</div><h1 class="heading ${toneClass}">${heading}</h1><div class="desc">${body}</div><div class="actions"><a class="btn btn-primary" href="/">Back to OkFile Home</a><a class="btn" href="/en/account/">Open Account</a></div></div></div></body></html>`;
+}
+
+function notFoundHTML(id) {
+  return publicInfoPageHTML({
+    title: '404',
+    icon: '📭',
+    heading: 'File Not Found',
+    body: `<p>File <code>${escapeHtml(id)}</code> was not found.</p>`,
+    tone: 'danger',
+  });
 }
 
 function downloadLimitExceededHTML(meta) {
   const name = escapeHtml(meta?.name || meta?.id || 'unknown');
   const id = escapeHtml(meta?.id || 'unknown');
   const maxDownloads = Number.isInteger(meta?.maxDownloads) ? meta.maxDownloads : 0;
-  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>下载次数已用完 - OkFile</title>
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#0a0a0a;color:#fff;display:flex;align-items:center;justify-content:center;min-height:100vh}.wrap{text-align:center;padding:24px;max-width:560px}.icon{font-size:64px;margin-bottom:20px}h1{font-size:24px;font-weight:600;margin-bottom:12px;color:#f59e0b}p{color:#9ca3af;font-size:14px;line-height:1.8;margin-bottom:16px}a{color:#60a5fa;text-decoration:none;border:1px solid #333;padding:8px 20px;border-radius:8px;display:inline-block}a:hover{border-color:#60a5fa}</style></head>
-<body><div class="wrap"><div class="icon">🔒</div><h1>下载次数已用完</h1><p>文件 <code>${name}</code>（ID: <code>${id}</code>）已达到下载上限${maxDownloads > 0 ? `（${maxDownloads} 次）` : ''}。</p><a href="/">返回 OkFile 首页</a></div></body></html>`;
+  return publicInfoPageHTML({
+    title: 'Download Limit Reached',
+    icon: '🔒',
+    heading: 'Download Limit Reached',
+    body: `<p>File <code>${name}</code> (ID: <code>${id}</code>) has reached its download limit${maxDownloads > 0 ? ` (${maxDownloads} downloads)` : ''}.</p>`,
+    tone: 'warning',
+  });
 }
 
 function expiredFileHTML(meta) {
   const name = escapeHtml(meta?.name || meta?.id || 'unknown');
   const id = escapeHtml(meta?.id || 'unknown');
-  const expiresAt = meta?.expiresAt ? `<p>过期时间：<code>${escapeHtml(meta.expiresAt)}</code></p>` : '';
-  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>文件已过期 - OkFile</title>
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#0a0a0a;color:#fff;display:flex;align-items:center;justify-content:center;min-height:100vh}.wrap{text-align:center;padding:24px;max-width:560px}.icon{font-size:64px;margin-bottom:20px}h1{font-size:24px;font-weight:600;margin-bottom:12px;color:#f59e0b}p{color:#9ca3af;font-size:14px;line-height:1.8;margin-bottom:16px}a{color:#60a5fa;text-decoration:none;border:1px solid #333;padding:8px 20px;border-radius:8px;display:inline-block}a:hover{border-color:#60a5fa}</style></head>
-<body><div class="wrap"><div class="icon">⏳</div><h1>文件已过期</h1><p>文件 <code>${name}</code>（ID: <code>${id}</code>）已超过可访问期限。</p>${expiresAt}<a href="/">返回 OkFile 首页</a></div></body></html>`;
+  const expiresAt = meta?.expiresAt ? `<p>Expired at: <code>${escapeHtml(meta.expiresAt)}</code></p>` : '';
+  return publicInfoPageHTML({
+    title: 'File Expired',
+    icon: '⏳',
+    heading: 'File Expired',
+    body: `<p>File <code>${name}</code> (ID: <code>${id}</code>) is no longer available.</p>${expiresAt}`,
+    tone: 'warning',
+  });
 }
 
 function viewerShell(title, body, extraHead = '') {
-  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <title>${title}</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <link rel="icon" href="/favicon.ico" type="image/svg+xml">
 ${extraHead}
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;background:#0a0a0a;color:#e5e5e5;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;padding:16px}
-.wrap{width:100%;max-width:960px;text-align:center}
-.panel{position:relative;width:100%;background:#111;border-radius:12px;overflow:hidden;margin-bottom:20px;box-shadow:0 8px 32px rgba(0,0,0,.5)}
+html{background:#f5f7fb}
+body{font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;background:linear-gradient(180deg,#f7f9fc 0%,#eef3f9 100%);color:#334155;min-height:100vh}
+.topbar{position:sticky;top:0;z-index:20;background:rgba(247,249,252,.92);backdrop-filter:blur(14px);border-bottom:1px solid #dde6f0}
+.topbar-inner{width:min(1120px,100%);margin:0 auto;padding:14px 24px;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
+.brand{display:inline-flex;align-items:center;gap:10px;text-decoration:none}
+.brand-logo{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:10px;background:linear-gradient(135deg,#f48120,#ffb347);color:#fff;font-weight:800;box-shadow:0 8px 18px rgba(244,129,32,.2)}
+.brand-copy strong{display:block;font-size:16px;color:#0f172a}
+.brand-copy span{display:block;font-size:12px;color:#64748b}
+.top-actions{display:flex;gap:10px;flex-wrap:wrap}
+.top-actions a{padding:8px 14px;border-radius:999px;border:1px solid #dce4ee;background:#fff;color:#475569;text-decoration:none;font-size:12px;box-shadow:0 1px 2px rgba(15,23,42,.04)}
+.top-actions a:hover{border-color:#c7d6ea;background:#f8fafc;color:#0f172a}
+.wrap{width:100%;max-width:960px;text-align:center;margin:0 auto;padding:28px 16px}
+.crumbs{display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap;font-size:12px;color:#94a3b8;margin-bottom:16px}
+.crumbs a{color:#1d4ed8;text-decoration:none}
+.panel{position:relative;width:100%;background:#fff;border-radius:18px;overflow:hidden;margin-bottom:20px;box-shadow:0 14px 34px rgba(15,23,42,.08);border:1px solid #dce4ee}
 .panel img,.panel video,.panel iframe{width:100%;display:block;border:0;background:#000;max-height:80vh}
 .panel img{height:auto;object-fit:contain}
-.tag{display:inline-block;padding:3px 10px;border-radius:6px;font-size:11px;font-weight:700;letter-spacing:.05em;margin-bottom:12px}
-.tag.image{background:rgba(52,211,153,.15);color:#34d399;border:1px solid rgba(52,211,153,.3)}
-.tag.video{background:rgba(96,165,250,.15);color:#60a5fa;border:1px solid rgba(96,165,250,.3)}
-.tag.pdf,.tag.file{background:rgba(250,204,21,.15);color:#facc15;border:1px solid rgba(250,204,21,.3)}
-.info{display:flex;gap:12px;justify-content:center;color:#666;font-size:13px;margin-top:8px;flex-wrap:wrap}
-.info span{background:#161619;padding:4px 12px;border-radius:6px}
+.tag{display:inline-block;padding:3px 10px;border-radius:999px;font-size:11px;font-weight:700;letter-spacing:.05em;margin-bottom:12px}
+.tag.image{background:#ecfdf3;color:#166534;border:1px solid #bbf7d0}
+.tag.video{background:#eff6ff;color:#1d4ed8;border:1px solid #dbeafe}
+.tag.pdf,.tag.file{background:#fff7ed;color:#c2410c;border:1px solid #fed7aa}
+.info{display:flex;gap:12px;justify-content:center;color:#64748b;font-size:13px;margin-top:8px;flex-wrap:wrap}
+.info span{background:#fff;padding:4px 12px;border-radius:999px;border:1px solid #dce4ee}
 .actions{margin-top:18px;display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
-.btn{display:inline-flex;align-items:center;gap:6px;padding:8px 18px;border-radius:8px;font-size:13px;font-weight:500;text-decoration:none;border:1px solid #333;color:#ccc;transition:all .15s;cursor:pointer}
-.btn:hover{border-color:#60a5fa;color:#60a5fa;background:rgba(96,165,250,.08)}
-.btn-primary{background:#2563eb;border-color:#2563eb;color:#fff}
-.btn-primary:hover{background:#1d4ed8;border-color:#1d4ed8;color:#fff}
+.btn{display:inline-flex;align-items:center;gap:6px;padding:8px 18px;border-radius:12px;font-size:13px;font-weight:600;text-decoration:none;border:1px solid #dce4ee;color:#334155;background:#fff;transition:all .15s;cursor:pointer}
+.btn:hover{border-color:#c7d6ea;color:#0f172a;background:#f8fafc}
+.btn-primary{background:#1d4ed8;border-color:#1d4ed8;color:#fff;box-shadow:0 10px 24px rgba(29,78,216,.14)}
+.btn-primary:hover{background:#1e40af;border-color:#1e40af;color:#fff}
 .btn-disabled{opacity:.45;pointer-events:none;cursor:not-allowed}
-.name{font-size:18px;font-weight:600;margin:8px 0 6px;color:#fff;word-break:break-word}
-.hint{color:#888;font-size:13px;line-height:1.6}
-.warn{margin-top:12px;padding:12px 14px;border-radius:10px;background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.22);color:#fbbf24;font-size:13px;line-height:1.7;text-align:left}
-</style></head><body>${body}</body></html>`;
+.name{font-size:18px;font-weight:700;margin:8px 0 6px;color:#0f172a;word-break:break-word}
+.hint{color:#64748b;font-size:13px;line-height:1.6}
+.warn{margin-top:12px;padding:12px 14px;border-radius:14px;background:#fff7ed;border:1px solid #fed7aa;color:#c2410c;font-size:13px;line-height:1.7;text-align:left}
+@media (max-width:640px){.topbar-inner{padding:12px 16px}.wrap{padding:20px 16px}}
+</style></head><body><div class="topbar"><div class="topbar-inner"><a class="brand" href="/en/"><span class="brand-logo">O</span><span class="brand-copy"><strong>OkFile Console</strong><span>Preview</span></span></a><div class="top-actions"><a href="/en/">Home</a><a href="/en/upload/">Manual Upload</a><a href="/en/account/">Account</a></div></div></div><div class="crumbs"><a href="/en/">Home</a><span>/</span><span>${escapeHtml(title)}</span></div>${body}</body></html>`;
 }
 
 function downloadLimitHint(meta) {
   if (!meta?.downloadLimitEnabled) return '';
   if ((meta.remainingDownloads || 0) <= 0) {
-    return '<div class="hint" style="margin-top:12px">已启用下载次数限制：当前下载次数已用完。</div>';
+    return '<div class="hint" style="margin-top:12px">Download limits are enabled. No downloads remain.</div>';
   }
-  return `<div class="hint" style="margin-top:12px">已启用下载次数限制：剩余 ${meta.remainingDownloads} / ${meta.maxDownloads} 次。</div>`;
+  return `<div class="hint" style="margin-top:12px">Download limits are enabled. Remaining: ${meta.remainingDownloads} / ${meta.maxDownloads}.</div>`;
+}
+
+function burnAfterReadHint(meta) {
+  if (!meta?.burnAfterRead) return '';
+  return '<div class="warn">Burn-after-read is enabled. The first successful preview or download will invalidate this file and all related links.</div>';
 }
 
 function viewerDownloadAction(meta, label) {
   const href = escapeHtml(meta?.downloadUrl || controlledDownloadUrl(meta?.id || ''));
   if (meta?.downloadLimitEnabled && (meta.remainingDownloads || 0) <= 0) {
-    return `<span class="btn btn-primary btn-disabled">${escapeHtml(label)}（已达上限）</span>`;
+    return `<span class="btn btn-primary btn-disabled">${escapeHtml(label)} (limit reached)</span>`;
   }
   return `<a class="btn btn-primary" href="${href}">${escapeHtml(label)}</a>`;
 }
 
+function viewerInfoMarkup(meta) {
+  const items = [
+    formatSize(meta.size),
+    escapeHtml(meta.contentType),
+    escapeHtml(meta.id),
+    `IP: ${escapeHtml(meta.clientIp || 'Unknown')}`,
+    `Region: ${escapeHtml(meta.clientRegion || 'Unknown')}`
+  ];
+  return `<div class="info">${items.map((item) => `<span>${item}</span>`).join('')}</div>`;
+}
+
 function imageViewerPage(meta) {
-  const src = mediaUrl(meta.id);
+  const src = previewMediaUrl(meta);
   return viewerShell(
     `OkFile - ${escapeHtml(meta.name || meta.id)}`,
     `<div class="wrap">
       <div class="panel"><img src="${src}" alt="${escapeHtml(meta.name || meta.id)}" loading="lazy"></div>
       <span class="tag image">IMAGE</span>
       <div class="name">${escapeHtml(meta.name || meta.id)}</div>
-      <div class="info"><span>${formatSize(meta.size)}</span><span>${escapeHtml(meta.contentType)}</span><span>${escapeHtml(meta.id)}</span></div>
+      ${viewerInfoMarkup(meta)}
+      ${burnAfterReadHint(meta)}
       ${downloadLimitHint(meta)}
       <div class="actions">
-        ${viewerDownloadAction(meta, '下载图片')}
-        <a class="btn" href="${src}" target="_blank">文件直链</a>
-        <a class="btn" href="/">返回首页</a>
+        ${viewerDownloadAction(meta, 'Download Image')}
+        <a class="btn" href="${src}" target="_blank">Direct File URL</a>
+        <a class="btn" href="/">Back to Home</a>
       </div>
     </div>`,
     `<meta property="og:image" content="${src}"><meta name="twitter:card" content="summary_large_image">`
@@ -1264,20 +2288,21 @@ function imageViewerPage(meta) {
 }
 
 function videoViewerPage(meta) {
-  const src = mediaUrl(meta.id);
+  const src = previewMediaUrl(meta);
   return viewerShell(
     `OkFile - ${escapeHtml(meta.name || meta.id)}`,
     `<div class="wrap">
       <div class="panel"><video id="videoPlayer" controls playsinline preload="metadata" src="${src}"></video></div>
       <span class="tag video">VIDEO</span>
       <div class="name">${escapeHtml(meta.name || meta.id)}</div>
-      <div class="info"><span>${formatSize(meta.size)}</span><span>${escapeHtml(meta.contentType)}</span><span>${escapeHtml(meta.id)}</span></div>
-      <div class="warn" id="videoCompatHint">如果播放器空白、只有音频没有画面，通常表示当前浏览器不兼容该 MP4 的视频编码。请优先尝试“下载视频”或“文件直链”；如需稳定在线预览，建议转码为 H.264 + AAC 的 MP4。</div>
+      ${viewerInfoMarkup(meta)}
+      ${burnAfterReadHint(meta)}
+      <div class="warn" id="videoCompatHint">If the player is blank or audio plays without video, the current browser probably does not support this MP4 video codec. Try downloading the file or using the direct file URL. For reliable browser playback, re-encode to H.264 + AAC MP4.</div>
       ${downloadLimitHint(meta)}
       <div class="actions">
-        ${viewerDownloadAction(meta, '下载视频')}
-        <a class="btn" href="${src}" target="_blank">文件直链</a>
-        <a class="btn" href="/">返回首页</a>
+        ${viewerDownloadAction(meta, 'Download Video')}
+        <a class="btn" href="${src}" target="_blank">Direct File URL</a>
+        <a class="btn" href="/">Back to Home</a>
       </div>
     </div>`,
     `<script>
@@ -1298,14 +2323,14 @@ document.addEventListener('DOMContentLoaded', function () {
   video.addEventListener('loadedmetadata', function () {
     setTimeout(function () {
       if ((video.videoWidth || 0) === 0 && Number.isFinite(video.duration) && video.duration > 0) {
-        showHint('当前浏览器已读取到视频时长，但没有解码出可显示画面。这通常是视频编码不兼容。请下载视频或使用文件直链；如需稳定预览，建议转码为 H.264 + AAC 的 MP4。');
+        showHint('The browser loaded the video duration but could not decode any visible frames. This usually means the codec is not compatible. Download the video or use the direct file URL. For reliable preview support, re-encode to H.264 + AAC MP4.');
         return;
       }
       maybeHideHint();
     }, 800);
   });
   video.addEventListener('error', function () {
-    showHint('当前浏览器无法播放这个视频文件。你可以先下载视频，或转码为 H.264 + AAC 的 MP4 后再预览。');
+    showHint('The current browser cannot play this video. Download it first, or re-encode it to H.264 + AAC MP4 before previewing again.');
   });
   video.addEventListener('playing', maybeHideHint);
 });
@@ -1314,40 +2339,42 @@ document.addEventListener('DOMContentLoaded', function () {
 }
 
 function pdfViewerPage(meta) {
-  const src = mediaUrl(meta.id);
+  const src = previewMediaUrl(meta);
   return viewerShell(
     `OkFile - ${escapeHtml(meta.name || meta.id)}`,
     `<div class="wrap">
       <div class="panel"><iframe src="${src}" title="${escapeHtml(meta.name || meta.id)}" style="height:80vh"></iframe></div>
       <span class="tag pdf">PDF</span>
       <div class="name">${escapeHtml(meta.name || meta.id)}</div>
-      <div class="info"><span>${formatSize(meta.size)}</span><span>${escapeHtml(meta.contentType)}</span><span>${escapeHtml(meta.id)}</span></div>
+      ${viewerInfoMarkup(meta)}
+      ${burnAfterReadHint(meta)}
       ${downloadLimitHint(meta)}
       <div class="actions">
-        ${viewerDownloadAction(meta, '下载 PDF')}
-        <a class="btn" href="${src}" target="_blank">文件直链</a>
-        <a class="btn" href="/">返回首页</a>
+        ${viewerDownloadAction(meta, 'Download PDF')}
+        <a class="btn" href="${src}" target="_blank">Direct File URL</a>
+        <a class="btn" href="/">Back to Home</a>
       </div>
     </div>`
   );
 }
 
 function genericViewerPage(meta) {
-  const src = mediaUrl(meta.id);
+  const src = previewMediaUrl(meta);
   return viewerShell(
     `OkFile - ${escapeHtml(meta.name || meta.id)}`,
     `<div class="wrap">
       <div class="panel" style="padding:48px 24px">
-        <div class="hint">该文件类型暂不支持在线预览，请直接下载查看。</div>
+        <div class="hint">This file type is not supported for inline preview yet. Download it to inspect the contents.</div>
       </div>
       <span class="tag file">FILE</span>
       <div class="name">${escapeHtml(meta.name || meta.id)}</div>
-      <div class="info"><span>${formatSize(meta.size)}</span><span>${escapeHtml(meta.contentType)}</span><span>${escapeHtml(meta.id)}</span></div>
+      ${viewerInfoMarkup(meta)}
+      ${burnAfterReadHint(meta)}
       ${downloadLimitHint(meta)}
       <div class="actions">
-        ${viewerDownloadAction(meta, '下载文件')}
-        <a class="btn" href="${src}" target="_blank">文件直链</a>
-        <a class="btn" href="/">返回首页</a>
+        ${viewerDownloadAction(meta, 'Download File')}
+        <a class="btn" href="${src}" target="_blank">Direct File URL</a>
+        <a class="btn" href="/">Back to Home</a>
       </div>
     </div>`
   );
@@ -1355,7 +2382,7 @@ function genericViewerPage(meta) {
 
 function requirePresignEnv(env) {
   const missing = ['R2_ACCOUNT_ID', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY'].filter((key) => !env[key]);
-  if (missing.length) throw new Error(`缺少预签名配置: ${missing.join(', ')}`);
+  if (missing.length) throw new Error(`Missing presign configuration: ${missing.join(', ')}`);
 }
 
 function createR2Signer(env) {
@@ -1457,32 +2484,46 @@ async function deleteSiteUpdateToken(token, env) {
   await env.FILES.delete(siteUpdateTokenKey(token));
 }
 
-async function readFileMeta(id, env) {
-  const sidecar = await readSidecarMeta(id, env);
-  const r2Object = await env.FILES.head(id);
-  if (!r2Object) return null;
+function buildFileMeta(id, sidecar, r2Object = null) {
   const maxDownloads = normalizeMaxDownloads(sidecar?.maxDownloads);
   const expiresAt = normalizeExpiresAt(sidecar?.expiresAt);
+  const burnAfterRead = normalizeBurnAfterRead(sidecar?.burnAfterRead) === true;
+  const burnAfterReadConsumedAt = normalizeExpiresAt(sidecar?.burnAfterReadConsumedAt);
   const downloadCount = Number.isInteger(Number(sidecar?.downloadCount))
     ? Math.max(0, Number(sidecar.downloadCount))
     : 0;
   const downloadLimitEnabled = Number.isInteger(maxDownloads) && maxDownloads > 0;
+  const expired = (typeof expiresAt === 'string' && isExpiredAt(expiresAt))
+    || typeof burnAfterReadConsumedAt === 'string';
   return {
     id,
-    size: r2Object.size,
-    contentType: sidecar?.contentType || r2Object.httpMetadata?.contentType || r2Object.customMetadata?.contentType || 'application/octet-stream',
-    name: sidecar?.name || r2Object.customMetadata?.name || id,
-    uploadedAt: sidecar?.uploadedAt || r2Object.customMetadata?.uploadedAt || '',
-    etag: r2Object.httpEtag || r2Object.etag || null,
+    size: r2Object?.size ?? Number(sidecar?.size || 0),
+    contentType: sidecar?.contentType || r2Object?.httpMetadata?.contentType || r2Object?.customMetadata?.contentType || 'application/octet-stream',
+    name: sidecar?.name || r2Object?.customMetadata?.name || id,
+    uploadedAt: sidecar?.uploadedAt || r2Object?.customMetadata?.uploadedAt || '',
+    etag: sidecar?.etag || r2Object?.httpEtag || r2Object?.etag || null,
     expiresAt: typeof expiresAt === 'string' ? expiresAt : null,
-    expired: typeof expiresAt === 'string' ? isExpiredAt(expiresAt) : false,
+    expired,
     maxDownloads: downloadLimitEnabled ? maxDownloads : null,
     downloadCount,
     remainingDownloads: downloadLimitEnabled ? Math.max(maxDownloads - downloadCount, 0) : null,
     downloadLimitEnabled,
     lastDownloadedAt: sidecar?.lastDownloadedAt || '',
-    downloadUrl: controlledDownloadUrl(id)
+    burnAfterRead,
+    burnAfterReadConsumedAt: typeof burnAfterReadConsumedAt === 'string' ? burnAfterReadConsumedAt : null,
+    downloadUrl: controlledDownloadUrl(id),
+    clientIp: sidecar?.clientIp || r2Object?.customMetadata?.clientIp || '',
+    clientRegion: sidecar?.clientRegion || r2Object?.customMetadata?.clientRegion || ''
   };
+}
+
+async function readFileMeta(id, env) {
+  const sidecar = await readSidecarMeta(id, env);
+  const r2Object = await env.FILES.head(id);
+  if (!r2Object && !sidecar) return null;
+  const meta = buildFileMeta(id, sidecar, r2Object);
+  if (!r2Object && !meta.expired) return null;
+  return meta;
 }
 
 function parseRangeHeader(rangeHeader, size) {
@@ -1565,9 +2606,9 @@ async function createOrGetUser(email, env) {
   return getUserById(id, env);
 }
 
-async function sendMagicLink(email, request, env) {
-  if (!env.RESEND_API_KEY) throw new Error('缺少 RESEND_API_KEY');
-  if (!env.RESEND_FROM_EMAIL) throw new Error('缺少 RESEND_FROM_EMAIL');
+async function sendMagicLink(email, request, env, nextPath = '') {
+  if (!env.RESEND_API_KEY) throw new Error('Missing RESEND_API_KEY');
+  if (!env.RESEND_FROM_EMAIL) throw new Error('Missing RESEND_FROM_EMAIL');
   const user = await createOrGetUser(email, env);
   const rawToken = randomToken(32);
   const tokenHash = await sha256Hex(rawToken);
@@ -1577,18 +2618,18 @@ async function sendMagicLink(email, request, env) {
     'INSERT INTO magic_links (id, user_id, token_hash, expires_at, created_at) VALUES (?, ?, ?, ?, ?)'
   ).bind(`ml_${generateId(16)}`, user.id, tokenHash, expiresAt, now.toISOString()).run();
 
-  const verifyUrl = `${new URL(request.url).origin}/auth/verify?token=${encodeURIComponent(rawToken)}`;
+  const verifyUrl = `${new URL(request.url).origin}/auth/verify?token=${encodeURIComponent(rawToken)}${nextPath ? `&next=${encodeURIComponent(nextPath)}` : ''}`;
   const payload = {
     from: env.RESEND_FROM_EMAIL,
     to: [normalizeEmail(email)],
-    subject: 'OkFile 登录验证链接',
+    subject: 'OkFile Sign-In Link',
     html: `<div style="font-family:Arial,sans-serif;line-height:1.7;color:#111">
-      <h2>登录 OkFile</h2>
-      <p>点击下面的链接完成邮箱验证并登录：</p>
-      <p><a href="${verifyUrl}" style="display:inline-block;padding:12px 18px;background:#2563eb;color:#fff;text-decoration:none;border-radius:8px">验证并登录</a></p>
-      <p>如果按钮无法点击，请复制这个链接到浏览器打开：</p>
+      <h2>Sign in to OkFile</h2>
+      <p>Use the link below to verify your email address and sign in:</p>
+      <p><a href="${verifyUrl}" style="display:inline-block;padding:12px 18px;background:#2563eb;color:#fff;text-decoration:none;border-radius:8px">Verify and Sign In</a></p>
+      <p>If the button does not work, copy this URL into your browser:</p>
       <p>${verifyUrl}</p>
-      <p>链接有效期 15 分钟。</p>
+      <p>This link expires in 15 minutes.</p>
     </div>`
   };
 
@@ -1602,7 +2643,7 @@ async function sendMagicLink(email, request, env) {
   });
   if (!resendRes.ok) {
     const errorText = await resendRes.text();
-    throw new Error(`发送邮件失败: ${errorText}`);
+    throw new Error(`Failed to send email: ${errorText}`);
   }
   return user;
 }
@@ -1615,9 +2656,9 @@ async function consumeMagicLink(rawToken, env) {
      JOIN users ON users.id = magic_links.user_id
      WHERE magic_links.token_hash = ?`
   ).bind(tokenHash).first();
-  if (!link) return { error: '验证链接不存在或已失效' };
-  if (link.used_at) return { error: '验证链接已使用' };
-  if (new Date(link.expires_at).getTime() < Date.now()) return { error: '验证链接已过期' };
+  if (!link) return { error: 'Verification link does not exist or is no longer valid' };
+  if (link.used_at) return { error: 'Verification link has already been used' };
+  if (new Date(link.expires_at).getTime() < Date.now()) return { error: 'Verification link has expired' };
 
   const now = new Date().toISOString();
   await env.DB.batch([
@@ -1639,24 +2680,30 @@ async function createSession(userId, env) {
 }
 
 async function getSessionFromRequest(request, env) {
+  await ensureAccountDataIndexes(env);
   const token = parseCookies(request)[SESSION_COOKIE];
   if (!token) return null;
   const sessionHash = await sha256Hex(token);
   const record = await env.DB.prepare(
-    `SELECT sessions.id AS session_id, sessions.expires_at, users.*
+    `SELECT sessions.id AS session_id, sessions.expires_at, sessions.last_seen_at, users.*
      FROM sessions
      JOIN users ON users.id = sessions.user_id
      WHERE sessions.session_hash = ?`
   ).bind(sessionHash).first();
   if (!record) return null;
   if (new Date(record.expires_at).getTime() < Date.now()) return null;
-  await env.DB.prepare('UPDATE sessions SET last_seen_at = ? WHERE id = ?').bind(new Date().toISOString(), record.session_id).run();
+  const nowIso = new Date().toISOString();
+  const lastSeenAt = Date.parse(record.last_seen_at || '');
+  if (!Number.isFinite(lastSeenAt) || (Date.now() - lastSeenAt) >= 5 * 60 * 1000) {
+    await env.DB.prepare('UPDATE sessions SET last_seen_at = ? WHERE id = ?').bind(nowIso, record.session_id).run();
+  }
   return {
     sessionId: record.session_id,
     userId: record.id,
     email: record.email,
     verifiedAt: record.verified_at,
     createdAt: record.created_at,
+    lastLoginAt: record.last_login_at,
     isAdmin: adminEmailSet(env).has(normalizeEmail(record.email))
   };
 }
@@ -1669,6 +2716,7 @@ async function logoutSession(request, env) {
 }
 
 async function listApiKeysForUser(userId, env) {
+  await ensureAccountDataIndexes(env);
   const result = await env.DB.prepare(
     `SELECT id, name, key_prefix, status, limit_prepare_per_window, limit_prepare_window_sec,
             limit_upload_count_total, uploaded_count_total, created_at, last_used_at
@@ -1688,6 +2736,174 @@ async function listApiKeysForUser(userId, env) {
   }));
 }
 
+async function getAccountSummary(userId, env) {
+  await ensureAccountDataIndexes(env);
+  await ensurePublishedFilesTable(env);
+  await ensureSitesTables(env);
+  const now = new Date().toISOString();
+  const row = await env.DB.prepare(
+    `SELECT
+        (SELECT COUNT(*) FROM api_keys WHERE user_id = ?1) AS api_key_count,
+        (SELECT COUNT(*) FROM api_keys WHERE user_id = ?1 AND status = 'active') AS active_api_key_count,
+        (SELECT COUNT(*) FROM api_keys WHERE user_id = ?1 AND status = 'disabled') AS disabled_api_key_count,
+        (SELECT COALESCE(SUM(uploaded_count_total), 0) FROM api_keys WHERE user_id = ?1) AS uploaded_count_total,
+        (SELECT COUNT(*) FROM published_files WHERE user_id = ?1) AS file_count,
+        (SELECT COALESCE(SUM(size), 0) FROM published_files WHERE user_id = ?1) AS file_bytes,
+        (SELECT COUNT(*) FROM sites WHERE user_id = ?1) AS site_count,
+        (SELECT COALESCE(SUM(total_size), 0) FROM sites WHERE user_id = ?1) AS site_bytes,
+        (SELECT COUNT(*) FROM sites WHERE user_id = ?1 AND NOT (status = 'expired' OR (expires_at IS NOT NULL AND expires_at <= ?2))) AS active_site_count`
+  ).bind(userId, now).first();
+  return {
+    apiKeyCount: Number(row?.api_key_count || 0),
+    activeApiKeyCount: Number(row?.active_api_key_count || 0),
+    disabledApiKeyCount: Number(row?.disabled_api_key_count || 0),
+    uploadedCountTotal: Number(row?.uploaded_count_total || 0),
+    fileCount: Number(row?.file_count || 0),
+    fileBytes: Number(row?.file_bytes || 0),
+    siteCount: Number(row?.site_count || 0),
+    siteBytes: Number(row?.site_bytes || 0),
+    activeSiteCount: Number(row?.active_site_count || 0)
+  };
+}
+
+async function listFilesForUser(userId, env, limit = 100) {
+  await ensureAccountDataIndexes(env);
+  await ensurePublishedFilesTable(env);
+  const result = await env.DB.prepare(
+    `SELECT id, file_name, content_type, size, publish_origin, view_url, download_url, play_url, client_ip, client_region, created_at
+     FROM published_files
+     WHERE user_id = ?
+     ORDER BY created_at DESC
+     LIMIT ?`
+  ).bind(userId, limit).all();
+  return (result.results || []).map((item) => ({
+    id: item.id,
+    fileName: item.file_name || item.id,
+    contentType: item.content_type || '',
+    size: Number(item.size || 0),
+    publishOrigin: item.publish_origin || '',
+    viewUrl: item.view_url || '',
+    downloadUrl: item.download_url || '',
+    playUrl: item.play_url || '',
+    clientIp: item.client_ip || '',
+    clientRegion: item.client_region || '',
+    createdAt: item.created_at || null
+  }));
+}
+
+async function listSitesForUser(userId, env, limit = 100) {
+  await ensureAccountDataIndexes(env);
+  await ensureSitesTables(env);
+  const result = await env.DB.prepare(
+    `SELECT id, name, publish_origin, site_url, site_hostname, subdomain, entry_path, status, file_count, total_size, expires_at,
+            active_release_id, created_at, completed_at, updated_at
+     FROM sites
+     WHERE user_id = ?
+     ORDER BY updated_at DESC
+     LIMIT ?`
+  ).bind(userId, limit).all();
+  return (result.results || []).map((item) => ({
+    id: item.id,
+    name: item.name || item.id,
+    publishOrigin: item.publish_origin || '',
+    siteUrl: item.site_url || '',
+    siteHostname: item.site_hostname || '',
+    subdomain: item.subdomain || '',
+    entryPath: item.entry_path || '',
+    status: item.status || 'active',
+    fileCount: Number(item.file_count || 0),
+    totalSize: Number(item.total_size || 0),
+    expiresAt: item.expires_at || null,
+    activeReleaseId: item.active_release_id || '',
+    createdAt: item.created_at || null,
+    completedAt: item.completed_at || null,
+    updatedAt: item.updated_at || null
+  }));
+}
+
+function accountDetailForPage(pageKey) {
+  if (pageKey === 'overview' || pageKey === 'storage') return 'summary';
+  if (pageKey === 'api-keys') return 'api-keys';
+  return 'basic';
+}
+
+async function buildAccountPayload(session, detail, env) {
+  const payload = {
+    success: true,
+    userId: session.userId,
+    email: session.email,
+    createdAt: session.createdAt,
+    verifiedAt: session.verifiedAt,
+    lastLoginAt: session.lastLoginAt,
+    isAdmin: session.isAdmin
+  };
+  if (detail === 'full' || detail === 'summary') {
+    payload.summary = await getAccountSummary(session.userId, env);
+  }
+  if (detail === 'full' || detail === 'api-keys') {
+    payload.apiKeys = await listApiKeysForUser(session.userId, env);
+  }
+  return payload;
+}
+
+function sqlPlaceholders(count) {
+  return Array.from({ length: count }, () => '?').join(', ');
+}
+
+function chunkArray(values, size = 100) {
+  const result = [];
+  for (let index = 0; index < values.length; index += size) {
+    result.push(values.slice(index, index + size));
+  }
+  return result;
+}
+
+async function listSiteStoredFileIds(siteId, env) {
+  await ensureSitesTables(env);
+  const result = await env.DB.prepare(
+    `SELECT DISTINCT file_id
+     FROM (
+       SELECT file_id FROM site_files WHERE site_id = ?
+       UNION ALL
+       SELECT srf.file_id
+       FROM site_release_files srf
+       INNER JOIN site_releases sr ON sr.id = srf.release_id
+       WHERE sr.site_id = ?
+     ) refs`
+  ).bind(siteId, siteId).all();
+  return Array.from(new Set((result.results || []).map((item) => String(item.file_id || '')).filter(Boolean)));
+}
+
+async function listRetainedFileIdsForDeletedSite(siteId, fileIds, env) {
+  await ensureSitesTables(env);
+  await ensurePublishedFilesTable(env);
+  const retained = new Set();
+  for (const chunk of chunkArray(fileIds, 100)) {
+    if (!chunk.length) continue;
+    const inClause = sqlPlaceholders(chunk.length);
+    const published = await env.DB.prepare(
+      `SELECT id AS file_id
+       FROM published_files
+       WHERE id IN (${inClause})`
+    ).bind(...chunk).all();
+    for (const item of published.results || []) retained.add(String(item.file_id || ''));
+    const currentSites = await env.DB.prepare(
+      `SELECT DISTINCT file_id
+       FROM site_files
+       WHERE file_id IN (${inClause}) AND site_id <> ?`
+    ).bind(...chunk, siteId).all();
+    for (const item of currentSites.results || []) retained.add(String(item.file_id || ''));
+    const releases = await env.DB.prepare(
+      `SELECT DISTINCT srf.file_id
+       FROM site_release_files srf
+       INNER JOIN site_releases sr ON sr.id = srf.release_id
+       WHERE srf.file_id IN (${inClause}) AND sr.site_id <> ?`
+    ).bind(...chunk, siteId).all();
+    for (const item of releases.results || []) retained.add(String(item.file_id || ''));
+  }
+  return retained;
+}
+
 async function createApiKey(userId, name, env) {
   const rawKey = `okf_${generateId(10)}${generateId(10)}${generateId(10)}`;
   const keyHash = await sha256Hex(rawKey);
@@ -1702,7 +2918,7 @@ async function createApiKey(userId, name, env) {
   ).bind(
     id,
     userId,
-    String(name || '默认 API Key').trim().slice(0, 80) || '默认 API Key',
+    String(name || 'Default API Key').trim().slice(0, 80) || 'Default API Key',
     rawKey.slice(0, 12),
     keyHash,
     DEFAULT_API_KEY_PREPARE_LIMIT,
@@ -1737,9 +2953,9 @@ async function getApiKeyByRaw(rawKey, env) {
 }
 
 async function consumeApiKeyPrepare(apiKey, env) {
-  if (apiKey.status !== 'active') return { ok: false, status: 403, error: 'API Key 已被禁用' };
+  if (apiKey.status !== 'active') return { ok: false, status: 403, error: 'API key is disabled' };
   if (apiKey.uploadedCountTotal >= apiKey.limitUploadCountTotal) {
-    return { ok: false, status: 403, error: 'API Key 上载次数已用尽' };
+    return { ok: false, status: 403, error: 'API key upload quota has been exhausted' };
   }
   const windowSec = Math.max(Number(apiKey.limitPrepareWindowSec || 0), 60);
   const windowStartedAt = Math.floor(Date.now() / 1000 / windowSec) * windowSec;
@@ -1753,7 +2969,7 @@ async function consumeApiKeyPrepare(apiKey, env) {
     'SELECT prepare_count FROM api_key_usage_windows WHERE api_key_id = ? AND window_started_at = ?'
   ).bind(apiKey.id, windowStartedAt).first();
   if (Number(usage?.prepare_count || 0) > apiKey.limitPreparePerWindow) {
-    return { ok: false, status: 429, error: 'API Key 调用过于频繁，请稍后再试' };
+    return { ok: false, status: 429, error: 'API key rate limit exceeded. Please retry later' };
   }
   return { ok: true };
 }
@@ -1815,7 +3031,7 @@ async function listUploadedParts(id, uploadId, env) {
     const response = await signer.fetch(`${base}?${params.toString()}`, { method: 'GET' });
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(`查询分片失败: ${errorText || `HTTP ${response.status}`}`);
+      throw new Error(`Failed to list uploaded parts: ${errorText || `HTTP ${response.status}`}`);
     }
     const page = parseUploadedPartsXml(await response.text());
     parts.push(...page.parts);
@@ -1828,7 +3044,7 @@ async function listUploadedParts(id, uploadId, env) {
 
 function validateMultipartParts(parts, totalParts) {
   if (!parts.length) {
-    return { ok: false, status: 409, error: '尚未检测到已上载分片，请先完成所有 PUT 后再调用 complete' };
+    return { ok: false, status: 409, error: 'No uploaded parts were detected yet. Finish all PUT requests before calling complete' };
   }
   
   if (Number.isInteger(totalParts) && totalParts > 0) {
@@ -1845,7 +3061,7 @@ function validateMultipartParts(parts, totalParts) {
         ok: false,
         status: 409,
         success: false,
-        error: `分片数量不完整，当前 ${parts.length}/${totalParts}`,
+        error: `Incomplete multipart upload: ${parts.length}/${totalParts} parts are currently present`,
         uploadedParts: parts.length,
         totalParts,
         missingParts
@@ -1855,7 +3071,7 @@ function validateMultipartParts(parts, totalParts) {
     for (let index = 0; index < parts.length; index++) {
       const expectedPartNumber = index + 1;
       if (parts[index].partNumber !== expectedPartNumber) {
-        return { ok: false, status: 409, error: `分片编号不连续，缺少 part ${expectedPartNumber}` };
+        return { ok: false, status: 409, error: `Multipart part numbers are not contiguous. Missing part ${expectedPartNumber}` };
       }
     }
   }
@@ -1880,7 +3096,7 @@ function validateReportedPartEtags(clientParts, uploadedParts, totalParts) {
     return {
       ok: false,
       status: 409,
-      error: `客户端上报的分片 ETag 数量不完整，期望 ${totalParts}，实际 ${normalizedClientParts.length}`
+      error: `Client-reported part ETag count is incomplete: expected ${totalParts}, got ${normalizedClientParts.length}`
     };
   }
   const serverMap = new Map((uploadedParts || []).map((item) => [Number(item.partNumber), normalizeETag(item.etag)]));
@@ -1890,14 +3106,14 @@ function validateReportedPartEtags(clientParts, uploadedParts, totalParts) {
       return {
         ok: false,
         status: 409,
-        error: `服务端未找到 part ${part.partNumber}，无法校验分片 ETag`
+        error: `Server could not find part ${part.partNumber}, so its ETag cannot be validated`
       };
     }
     if (serverEtag !== part.etag) {
       return {
         ok: false,
         status: 409,
-        error: `part ${part.partNumber} 的 ETag 不匹配`
+        error: `ETag mismatch for part ${part.partNumber}`
       };
     }
   }
@@ -1909,10 +3125,10 @@ function validateReportedObjectETag(expectedEtag, actualEtag) {
   if (!expected) return { ok: true, validated: false };
   const actual = normalizeETag(actualEtag);
   if (!actual) {
-    return { ok: false, status: 409, error: '服务端未返回对象 ETag，无法完成完整性校验' };
+    return { ok: false, status: 409, error: 'Server did not return an object ETag, so integrity validation cannot be completed' };
   }
   if (expected !== actual) {
-    return { ok: false, status: 409, error: '对象 ETag 不匹配，文件完整性校验失败' };
+    return { ok: false, status: 409, error: 'Object ETag mismatch. File integrity validation failed' };
   }
   return { ok: true, validated: true };
 }
@@ -1924,11 +3140,37 @@ function normalizeMaxDownloads(value) {
   return parsed;
 }
 
+function normalizeBurnAfterRead(value) {
+  if (value === undefined || value === null || value === '') return false;
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') {
+    if (value === 1) return true;
+    if (value === 0) return false;
+    return NaN;
+  }
+  const normalized = String(value).trim().toLowerCase();
+  if (!normalized) return false;
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+  return NaN;
+}
+
 function normalizeExpiresAt(value) {
   if (value === undefined || value === null || value === '') return null;
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return NaN;
   return parsed.toISOString();
+}
+
+function defaultAnonymousExpiresAt() {
+  return new Date(Date.now() + ANONYMOUS_RESOURCE_TTL_MS).toISOString();
+}
+
+function resolveDefaultExpiresAt(expiresAt, options = {}) {
+  if (typeof expiresAt === 'string') return expiresAt;
+  if (typeof options.fallbackExpiresAt === 'string') return options.fallbackExpiresAt;
+  if (options.apiKey?.userId || options.session?.userId) return null;
+  return defaultAnonymousExpiresAt();
 }
 
 function isExpiredAt(expiresAt) {
@@ -1939,7 +3181,7 @@ function isMetaExpired(meta) {
   return isExpiredAt(meta?.expiresAt);
 }
 
-function buildPrepareLimits(apiKey, actualPartSize, maxDownloads) {
+function buildPrepareLimits(apiKey, actualPartSize, maxDownloads, burnAfterRead = false) {
   const normalizedMaxDownloads = Number.isInteger(maxDownloads) && maxDownloads > 0 ? maxDownloads : null;
   const limits = {
     maxFileSize: MAX_SIZE,
@@ -1958,6 +3200,11 @@ function buildPrepareLimits(apiKey, actualPartSize, maxDownloads) {
       supported: true,
       input: 'expiresAt',
       format: 'ISO 8601 UTC datetime'
+    },
+    burnAfterRead: {
+      supported: true,
+      enabled: Boolean(burnAfterRead),
+      input: 'burnAfterRead'
     }
   };
 
@@ -1989,6 +3236,7 @@ async function writeFileMeta(id, filename, declaredType, env, options = {}) {
   if (!head) return null;
   const maxDownloads = normalizeMaxDownloads(options.maxDownloads);
   const expiresAt = normalizeExpiresAt(options.expiresAt);
+  const burnAfterRead = normalizeBurnAfterRead(options.burnAfterRead) === true;
   const meta = {
     id,
     name: filename,
@@ -1998,8 +3246,12 @@ async function writeFileMeta(id, filename, declaredType, env, options = {}) {
     etag: head.httpEtag || head.etag || '',
     expiresAt: typeof expiresAt === 'string' ? expiresAt : null,
     maxDownloads: Number.isInteger(maxDownloads) && maxDownloads > 0 ? maxDownloads : null,
+    burnAfterRead,
+    burnAfterReadConsumedAt: null,
     downloadCount: 0,
-    lastDownloadedAt: ''
+    lastDownloadedAt: '',
+    clientIp: String(options.clientIp || ''),
+    clientRegion: String(options.clientRegion || '')
   };
   await saveJsonObject(metaKey(id), meta, env);
   return readFileMeta(id, env);
@@ -2025,7 +3277,27 @@ async function ensureAppSettingsTable(env) {
   ).run();
 }
 
+async function ensureAccountDataIndexes(env) {
+  if (accountIndexesEnsured) return;
+  for (const statement of [
+    'CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email)',
+    'CREATE INDEX IF NOT EXISTS idx_magic_links_token_hash ON magic_links(token_hash)',
+    'CREATE INDEX IF NOT EXISTS idx_sessions_session_hash ON sessions(session_hash)',
+    'CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id)',
+    'CREATE UNIQUE INDEX IF NOT EXISTS idx_api_keys_key_hash ON api_keys(key_hash)',
+    'CREATE INDEX IF NOT EXISTS idx_api_keys_user_id_created_at ON api_keys(user_id, created_at DESC)',
+    'CREATE INDEX IF NOT EXISTS idx_published_files_user_id_created_at ON published_files(user_id, created_at DESC)',
+    'CREATE INDEX IF NOT EXISTS idx_sites_user_id ON sites(user_id)'
+  ]) {
+    try {
+      await env.DB.prepare(statement).run();
+    } catch {}
+  }
+  accountIndexesEnsured = true;
+}
+
 async function ensurePublishedFilesTable(env) {
+  if (publishedFilesTableEnsured) return;
   await env.DB.prepare(
     `CREATE TABLE IF NOT EXISTS published_files (
       id TEXT PRIMARY KEY,
@@ -2036,6 +3308,8 @@ async function ensurePublishedFilesTable(env) {
       view_url TEXT NOT NULL,
       download_url TEXT NOT NULL,
       play_url TEXT NOT NULL,
+      client_ip TEXT,
+      client_region TEXT,
       api_key_id TEXT,
       user_id TEXT,
       created_at TEXT NOT NULL
@@ -2044,9 +3318,20 @@ async function ensurePublishedFilesTable(env) {
   try {
     await env.DB.prepare('ALTER TABLE published_files ADD COLUMN size INTEGER NOT NULL DEFAULT 0').run();
   } catch {}
+  try {
+    await env.DB.prepare('ALTER TABLE published_files ADD COLUMN client_ip TEXT').run();
+  } catch {}
+  try {
+    await env.DB.prepare('ALTER TABLE published_files ADD COLUMN client_region TEXT').run();
+  } catch {}
+  try {
+    await env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_published_files_user_id_created_at ON published_files(user_id, created_at DESC)').run();
+  } catch {}
+  publishedFilesTableEnsured = true;
 }
 
 async function ensureSitesTables(env) {
+  if (sitesTablesEnsured) return;
   await env.DB.batch([
     env.DB.prepare(
       `CREATE TABLE IF NOT EXISTS sites (
@@ -2125,8 +3410,17 @@ async function ensureSitesTables(env) {
       await env.DB.prepare(statement).run();
     } catch {}
   }
+  try {
+    await env.DB.prepare(
+      `UPDATE sites
+       SET updated_at = COALESCE(updated_at, completed_at, created_at)
+       WHERE updated_at IS NULL OR updated_at = ''`
+    ).run();
+  } catch {}
   await env.DB.batch([
     env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_sites_created_at ON sites(created_at)'),
+    env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_sites_user_id ON sites(user_id)'),
+    env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_sites_user_id_updated_at ON sites(user_id, updated_at DESC)'),
     env.DB.prepare('CREATE UNIQUE INDEX IF NOT EXISTS idx_sites_site_hostname ON sites(site_hostname)'),
     env.DB.prepare('CREATE UNIQUE INDEX IF NOT EXISTS idx_sites_subdomain ON sites(subdomain)'),
     env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_site_files_file_id ON site_files(file_id)'),
@@ -2134,6 +3428,7 @@ async function ensureSitesTables(env) {
     env.DB.prepare('CREATE UNIQUE INDEX IF NOT EXISTS idx_site_releases_site_version ON site_releases(site_id, version_no)'),
     env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_site_release_files_file_id ON site_release_files(file_id)')
   ]);
+  sitesTablesEnsured = true;
 }
 
 function siteReleaseId() {
@@ -2363,9 +3658,9 @@ async function activateSiteRelease(siteId, releaseId, env) {
   await ensureSitesTables(env);
   await ensureSiteReleaseBackfill(siteId, env);
   const release = await getSiteReleaseById(siteId, releaseId, env);
-  if (!release) throw new Error('站点版本不存在');
+  if (!release) throw new Error('Site release does not exist');
   const site = await getSiteById(siteId, env);
-  if (!site) throw new Error('站点不存在');
+  if (!site) throw new Error('Site does not exist');
   const files = await listSiteReleaseFiles(releaseId, env);
   const now = new Date().toISOString();
   const statements = [
@@ -2476,8 +3771,8 @@ async function recordPublishedFile(id, meta, links, session, env) {
   const now = new Date().toISOString();
   await env.DB.prepare(
     `INSERT INTO published_files (
-      id, file_name, content_type, size, publish_origin, view_url, download_url, play_url, api_key_id, user_id, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      id, file_name, content_type, size, publish_origin, view_url, download_url, play_url, client_ip, client_region, api_key_id, user_id, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       file_name = excluded.file_name,
       content_type = excluded.content_type,
@@ -2486,6 +3781,8 @@ async function recordPublishedFile(id, meta, links, session, env) {
       view_url = excluded.view_url,
       download_url = excluded.download_url,
       play_url = excluded.play_url,
+      client_ip = excluded.client_ip,
+      client_region = excluded.client_region,
       api_key_id = excluded.api_key_id,
       user_id = excluded.user_id,
       created_at = excluded.created_at`
@@ -2498,6 +3795,8 @@ async function recordPublishedFile(id, meta, links, session, env) {
     links.url,
     links.downloadUrl,
     links.playUrl,
+    meta?.clientIp || session?.clientIp || null,
+    meta?.clientRegion || session?.clientRegion || null,
     session?.apiKeyId || null,
     session?.userId || null,
     now
@@ -2794,14 +4093,14 @@ function siteDirectoryListingHTML(site, listing) {
             <span class="file-icon directory">UP</span>
             <span class="name-stack">
               <span class="name-main">..</span>
-              <span class="name-sub">返回上一级目录</span>
+              <span class="name-sub">Back to parent directory</span>
             </span>
           </a>
         </td>
-        <td><span class="type-pill directory">上级目录</span></td>
+        <td><span class="type-pill directory">Parent</span></td>
         <td>-</td>
         <td>-</td>
-        <td><a class="btn" href="${parentHref}">返回上级</a></td>
+        <td><a class="btn" href="${parentHref}">Go Up</a></td>
       </tr>
     `] : []),
     ...listing.directories.map((item) => `
@@ -2811,19 +4110,19 @@ function siteDirectoryListingHTML(site, listing) {
             <span class="file-icon directory">DIR</span>
             <span class="name-stack">
               <span class="name-main">${escapeHtml(item.name)}</span>
-              <span class="name-sub">${item.fileCount} 个条目 · ${escapeHtml(formatSize(Number(item.totalSize || 0)))}</span>
+              <span class="name-sub">${item.fileCount} entries · ${escapeHtml(formatSize(Number(item.totalSize || 0)))}</span>
             </span>
           </a>
         </td>
-        <td><span class="type-pill directory">目录</span></td>
+        <td><span class="type-pill directory">Directory</span></td>
         <td>${escapeHtml(formatSize(Number(item.totalSize || 0)))}</td>
         <td>${escapeHtml(formatSiteListingTime(item.latestUpdatedAt || ''))}</td>
-        <td><a class="btn" href="${item.href}">打开目录</a></td>
+        <td><a class="btn" href="${item.href}">Open Directory</a></td>
       </tr>
     `),
     ...listing.files.map((item) => {
       const actionHref = (isImage(item.contentType) || isVideo(item.contentType)) ? item.href : item.downloadHref;
-      const actionLabel = isImage(item.contentType) ? '查看' : (isVideo(item.contentType) ? '播放' : '下载');
+      const actionLabel = isImage(item.contentType) ? 'View' : (isVideo(item.contentType) ? 'Play' : 'Download');
       const visual = siteListingVisual('file', item.contentType, item.name);
       const filterCategory = siteListingFilterCategory('file', item.contentType, item.name);
       const uploadedAt = item.uploadedAt || item.createdAt || '';
@@ -2846,35 +4145,36 @@ function siteDirectoryListingHTML(site, listing) {
       `;
     })
   ].join('');
-  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>${escapeHtml(site.name || site.id)} - 文件列表</title>
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${escapeHtml(site.name || site.id)} - File Listing</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<style>*{box-sizing:border-box}body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#0b0d11;color:#e5e7eb;padding:24px}.wrap{max-width:1120px;margin:0 auto}.crumbs{display:flex;gap:8px;flex-wrap:wrap;font-size:13px;color:#9ca3af;margin:14px 0 18px}.crumb{display:inline-flex;align-items:center;gap:8px}.crumb a{color:#93c5fd;text-decoration:none}.crumb.current span:last-child{color:#e5e7eb;font-weight:600}.summary{display:flex;gap:14px;flex-wrap:wrap;color:#9ca3af;font-size:13px;margin-bottom:16px}.toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px}.toolbar-group{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.sorts,.filters{display:flex;gap:8px;flex-wrap:wrap}.sort-btn,.filter-btn{appearance:none;border:1px solid #374151;background:#0f172a;color:#cbd5e1;padding:8px 12px;border-radius:999px;font-size:12px;cursor:pointer;transition:.18s}.sort-btn:hover,.sort-btn.active,.filter-btn:hover,.filter-btn.active{border-color:#60a5fa;color:#fff;background:#111827}.toolbar-note{font-size:12px;color:#94a3b8}.panel{background:#111827;border:1px solid #1f2937;border-radius:14px;overflow:hidden}.title{padding:18px 20px;border-bottom:1px solid #1f2937}.title h1{font-size:22px;margin:0 0 6px}.title p{margin:0;color:#9ca3af;font-size:14px}.name-link{display:flex;align-items:center;gap:12px;color:#e5e7eb;text-decoration:none;min-width:0}.name-stack{display:flex;flex-direction:column;gap:4px;min-width:0}.name-main{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.name-sub{font-size:12px;color:#94a3b8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.file-icon{display:inline-flex;align-items:center;justify-content:center;min-width:44px;height:30px;padding:0 8px;border-radius:999px;font-size:11px;font-weight:700;letter-spacing:.04em;border:1px solid transparent}.file-icon.directory{background:rgba(59,130,246,.15);border-color:rgba(96,165,250,.25);color:#93c5fd}.file-icon.image{background:rgba(16,185,129,.14);border-color:rgba(52,211,153,.24);color:#6ee7b7}.file-icon.video{background:rgba(244,63,94,.14);border-color:rgba(251,113,133,.24);color:#fda4af}.file-icon.pdf{background:rgba(239,68,68,.14);border-color:rgba(248,113,113,.24);color:#fca5a5}.file-icon.code{background:rgba(168,85,247,.14);border-color:rgba(196,181,253,.24);color:#d8b4fe}.file-icon.text{background:rgba(250,204,21,.14);border-color:rgba(253,224,71,.24);color:#fde68a}.file-icon.audio{background:rgba(34,197,94,.14);border-color:rgba(134,239,172,.24);color:#bbf7d0}.file-icon.archive{background:rgba(249,115,22,.14);border-color:rgba(251,146,60,.24);color:#fdba74}.file-icon.file{background:rgba(148,163,184,.15);border-color:rgba(203,213,225,.2);color:#cbd5e1}.type-pill{display:inline-flex;align-items:center;justify-content:center;padding:6px 10px;border-radius:999px;font-size:12px;border:1px solid transparent}.type-pill.directory{background:rgba(59,130,246,.12);border-color:rgba(96,165,250,.22);color:#93c5fd}.type-pill.image{background:rgba(16,185,129,.12);border-color:rgba(52,211,153,.22);color:#6ee7b7}.type-pill.video{background:rgba(244,63,94,.12);border-color:rgba(251,113,133,.22);color:#fda4af}.type-pill.pdf{background:rgba(239,68,68,.12);border-color:rgba(248,113,113,.22);color:#fca5a5}.type-pill.code{background:rgba(168,85,247,.12);border-color:rgba(196,181,253,.22);color:#d8b4fe}.type-pill.text{background:rgba(250,204,21,.12);border-color:rgba(253,224,71,.22);color:#fde68a}.type-pill.audio{background:rgba(34,197,94,.12);border-color:rgba(134,239,172,.22);color:#bbf7d0}.type-pill.archive{background:rgba(249,115,22,.12);border-color:rgba(251,146,60,.22);color:#fdba74}.type-pill.file{background:rgba(148,163,184,.12);border-color:rgba(203,213,225,.18);color:#cbd5e1}table{width:100%;border-collapse:collapse}th,td{padding:14px 16px;border-bottom:1px solid #1f2937;text-align:left;font-size:14px;vertical-align:middle}th{color:#9ca3af;font-weight:500;background:#0f172a}.parent-row td{background:rgba(15,23,42,.45)}tr:last-child td{border-bottom:none}tr[hidden]{display:none !important}a{color:#e5e7eb;text-decoration:none}.btn{display:inline-block;padding:7px 12px;border:1px solid #374151;border-radius:8px;color:#cbd5e1}.btn:hover{border-color:#60a5fa;color:#fff}.empty{padding:32px 20px;color:#9ca3af}@media (max-width:860px){body{padding:16px}th:nth-child(2),td:nth-child(2){display:none}}@media (max-width:620px){th:nth-child(4),td:nth-child(4){display:none}.file-icon{min-width:38px;height:28px;font-size:10px}}</style></head>
-<body><div class="wrap"><div class="title"><h1>站点文件列表</h1><p>${escapeHtml(site.name || site.id || 'site')}</p></div>
+<meta name="theme-color" content="#f5f7fb">
+<style>*{box-sizing:border-box}html{background:#f5f7fb}body{margin:0;font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:linear-gradient(180deg,#f7f9fc 0%,#eef3f9 100%);color:#334155}.topbar{position:sticky;top:0;z-index:20;background:rgba(247,249,252,.92);backdrop-filter:blur(14px);border-bottom:1px solid #dde6f0}.topbar-inner{width:min(1120px,100%);margin:0 auto;padding:14px 24px;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}.brand{display:inline-flex;align-items:center;gap:10px;text-decoration:none}.brand-logo{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:10px;background:linear-gradient(135deg,#f48120,#ffb347);color:#fff;font-weight:800;box-shadow:0 8px 18px rgba(244,129,32,.2)}.brand-copy strong{display:block;font-size:16px;color:#0f172a}.brand-copy span{display:block;font-size:12px;color:#64748b}.top-actions{display:flex;gap:10px;flex-wrap:wrap}.top-actions a{padding:8px 14px;border-radius:999px;border:1px solid #dce4ee;background:#fff;color:#475569;text-decoration:none;font-size:12px;box-shadow:0 1px 2px rgba(15,23,42,.04)}.top-actions a:hover{border-color:#c7d6ea;background:#f8fafc;color:#0f172a}.wrap{max-width:1120px;margin:0 auto;padding:24px}.crumbs{display:flex;gap:8px;flex-wrap:wrap;font-size:13px;color:#94a3b8;margin:14px 0 18px}.crumb{display:inline-flex;align-items:center;gap:8px}.crumb a{color:#1d4ed8;text-decoration:none}.crumb.current span:last-child{color:#0f172a;font-weight:700}.summary{display:flex;gap:14px;flex-wrap:wrap;color:#64748b;font-size:13px;margin-bottom:16px}.toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px}.toolbar-group{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.sorts,.filters{display:flex;gap:8px;flex-wrap:wrap}.sort-btn,.filter-btn{appearance:none;border:1px solid #dce4ee;background:#fff;color:#334155;padding:8px 12px;border-radius:999px;font-size:12px;cursor:pointer;transition:.18s}.sort-btn:hover,.filter-btn:hover{border-color:#c7d6ea;background:#f8fafc;color:#0f172a}.sort-btn.active,.filter-btn.active{border-color:#dbeafe;color:#1d4ed8;background:#eff6ff}.toolbar-note{font-size:12px;color:#64748b}.panel{background:#fff;border:1px solid #dce4ee;border-radius:18px;overflow:hidden;box-shadow:0 12px 28px rgba(15,23,42,.05)}.title{padding:18px 20px;border-bottom:1px solid #e7edf4}.title h1{font-size:22px;margin:0 0 6px;color:#0f172a}.title p{margin:0;color:#64748b;font-size:14px}.name-link{display:flex;align-items:center;gap:12px;color:#0f172a;text-decoration:none;min-width:0}.name-stack{display:flex;flex-direction:column;gap:4px;min-width:0}.name-main{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.name-sub{font-size:12px;color:#64748b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.file-icon{display:inline-flex;align-items:center;justify-content:center;min-width:44px;height:30px;padding:0 8px;border-radius:999px;font-size:11px;font-weight:700;letter-spacing:.04em;border:1px solid transparent}.file-icon.directory{background:#eff6ff;border-color:#dbeafe;color:#1d4ed8}.file-icon.image{background:#ecfdf3;border-color:#bbf7d0;color:#166534}.file-icon.video{background:#fff1f2;border-color:#fecdd3;color:#e11d48}.file-icon.pdf{background:#fff7ed;border-color:#fed7aa;color:#c2410c}.file-icon.code{background:#f5f3ff;border-color:#ddd6fe;color:#7c3aed}.file-icon.text{background:#fefce8;border-color:#fef08a;color:#a16207}.file-icon.audio{background:#f0fdf4;border-color:#bbf7d0;color:#15803d}.file-icon.archive{background:#fff7ed;border-color:#fdba74;color:#c2410c}.file-icon.file{background:#f8fafc;border-color:#e2e8f0;color:#475569}.type-pill{display:inline-flex;align-items:center;justify-content:center;padding:6px 10px;border-radius:999px;font-size:12px;border:1px solid transparent}.type-pill.directory{background:#eff6ff;border-color:#dbeafe;color:#1d4ed8}.type-pill.image{background:#ecfdf3;border-color:#bbf7d0;color:#166534}.type-pill.video{background:#fff1f2;border-color:#fecdd3;color:#e11d48}.type-pill.pdf{background:#fff7ed;border-color:#fed7aa;color:#c2410c}.type-pill.code{background:#f5f3ff;border-color:#ddd6fe;color:#7c3aed}.type-pill.text{background:#fefce8;border-color:#fef08a;color:#a16207}.type-pill.audio{background:#f0fdf4;border-color:#bbf7d0;color:#15803d}.type-pill.archive{background:#fff7ed;border-color:#fdba74;color:#c2410c}.type-pill.file{background:#f8fafc;border-color:#e2e8f0;color:#475569}table{width:100%;border-collapse:collapse}th,td{padding:14px 16px;border-bottom:1px solid #e7edf4;text-align:left;font-size:14px;vertical-align:middle}th{color:#64748b;font-weight:600;background:#fbfcfe}.parent-row td{background:#f8fafc}tr:last-child td{border-bottom:none}tr[hidden]{display:none !important}a{color:#1d4ed8;text-decoration:none}.btn{display:inline-block;padding:7px 12px;border:1px solid #dce4ee;border-radius:10px;color:#334155;background:#fff}.btn:hover{border-color:#c7d6ea;color:#0f172a;background:#f8fafc}.empty{padding:32px 20px;color:#64748b}@media (max-width:860px){.topbar-inner{padding:12px 16px}.wrap{padding:16px}th:nth-child(2),td:nth-child(2){display:none}}@media (max-width:620px){th:nth-child(4),td:nth-child(4){display:none}.file-icon{min-width:38px;height:28px;font-size:10px}}</style></head>
+<body><div class="topbar"><div class="topbar-inner"><a class="brand" href="/en/"><span class="brand-logo">O</span><span class="brand-copy"><strong>OkFile Console</strong><span>Site Listing</span></span></a><div class="top-actions"><a href="/en/">Home</a><a href="/en/upload/">Manual Upload</a><a href="/en/account/">Account</a></div></div></div><div class="wrap"><div class="title"><h1>Site File Listing</h1><p>${escapeHtml(site.name || site.id || 'site')}</p></div>
 <div class="crumbs">${crumbs.map((item, index) => {
     const isCurrent = index === crumbs.length - 1;
     return `<span class="crumb${isCurrent ? ' current' : ''}">${index ? '<span>/</span>' : ''}${isCurrent ? `<span>${escapeHtml(item.name)}</span>` : `<a href="${item.href}">${escapeHtml(item.name)}</a>`}</span>`;
   }).join('')}</div>
-<div class="summary"><span>目录：${listing.directories.length}</span><span>文件：${listing.files.length}</span><span>当前目录总大小：${escapeHtml(formatSize(Number(listing.totalSize || 0)))}</span><span>最近更新：${escapeHtml(formatSiteListingTime(listing.latestUpdatedAt || ''))}</span><span>站点：${escapeHtml(site.siteHostname || '')}</span></div>
+<div class="summary"><span>Directories: ${listing.directories.length}</span><span>Files: ${listing.files.length}</span><span>Current directory size: ${escapeHtml(formatSize(Number(listing.totalSize || 0)))}</span><span>Last updated: ${escapeHtml(formatSiteListingTime(listing.latestUpdatedAt || ''))}</span><span>Site: ${escapeHtml(site.siteHostname || '')}</span></div>
 <div class="toolbar">
   <div class="toolbar-group">
     <div class="sorts">
-      <button class="sort-btn active" type="button" data-sort="name">按名称</button>
-      <button class="sort-btn" type="button" data-sort="time">按时间</button>
-      <button class="sort-btn" type="button" data-sort="size">按大小</button>
+      <button class="sort-btn active" type="button" data-sort="name">By Name</button>
+      <button class="sort-btn" type="button" data-sort="time">By Time</button>
+      <button class="sort-btn" type="button" data-sort="size">By Size</button>
     </div>
     <div class="filters">
-      <button class="filter-btn active" type="button" data-filter="all">全部</button>
-      <button class="filter-btn" type="button" data-filter="directory">目录</button>
-      <button class="filter-btn" type="button" data-filter="image">图片</button>
-      <button class="filter-btn" type="button" data-filter="video">视频</button>
-      <button class="filter-btn" type="button" data-filter="document">文档</button>
-      <button class="filter-btn" type="button" data-filter="text">文本</button>
-      <button class="filter-btn" type="button" data-filter="other">其它</button>
+      <button class="filter-btn active" type="button" data-filter="all">All</button>
+      <button class="filter-btn" type="button" data-filter="directory">Directories</button>
+      <button class="filter-btn" type="button" data-filter="image">Images</button>
+      <button class="filter-btn" type="button" data-filter="video">Videos</button>
+      <button class="filter-btn" type="button" data-filter="document">Documents</button>
+      <button class="filter-btn" type="button" data-filter="text">Text</button>
+      <button class="filter-btn" type="button" data-filter="other">Other</button>
     </div>
   </div>
-  <div class="toolbar-note">${listing.directoryPath ? `<a class="btn" href="${parentHref}">返回上级</a>` : '目录优先显示，可按名称、时间或大小排序文件'}</div>
+  <div class="toolbar-note">${listing.directoryPath ? `<a class="btn" href="${parentHref}">Go Up</a>` : 'Directories are shown first. Files can be sorted by name, time, or size.'}</div>
 </div>
-<div class="panel">${rows ? `<table><thead><tr><th>文件名</th><th>类型</th><th>大小</th><th>上传时间</th><th>操作</th></tr></thead><tbody id="siteListingBody">${rows}</tbody></table>` : '<div class="empty">当前目录为空。</div>'}</div>
+<div class="panel">${rows ? `<table><thead><tr><th>Name</th><th>Type</th><th>Size</th><th>Uploaded At</th><th>Action</th></tr></thead><tbody id="siteListingBody">${rows}</tbody></table>` : '<div class="empty">This directory is empty.</div>'}</div>
 </div>
 <script>
 (function () {
@@ -2886,7 +4186,7 @@ function siteDirectoryListingHTML(site, listing) {
   var currentSort = 'name';
   var currentFilter = 'all';
   function compareByName(a, b) {
-    return String(a.dataset.name || '').localeCompare(String(b.dataset.name || ''), 'zh-CN', { numeric: true, sensitivity: 'base' });
+    return String(a.dataset.name || '').localeCompare(String(b.dataset.name || ''), 'en', { numeric: true, sensitivity: 'base' });
   }
   function isSticky(row) {
     return row.classList.contains('parent-row');
@@ -2990,23 +4290,44 @@ async function sendUploadNotification(meta, request, env, links = null) {
   const viewUrl = publishLinks.url;
   const downloadUrl = publishLinks.downloadUrl;
   const playUrl = publishLinks.playUrl;
+  const sourceIp = meta.clientIp || 'Unknown';
+  const sourceRegion = meta.clientRegion || 'Unknown';
   const html = `<div style="font-family:Arial,sans-serif;line-height:1.7;color:#111">
-    <h2>收到新文件</h2>
+    <h2>New File Uploaded</h2>
     <ul>
-      <li>文件名：${escapeHtml(meta.name || meta.id)}</li>
-      <li>文件 ID：${escapeHtml(meta.id)}</li>
-      <li>大小：${escapeHtml(formatSize(meta.size))}</li>
-      <li>类型：${escapeHtml(meta.contentType || 'application/octet-stream')}</li>
-      <li>上传时间：${escapeHtml(meta.uploadedAt || new Date().toISOString())}</li>
-      ${meta.expiresAt ? `<li>过期时间：${escapeHtml(meta.expiresAt)}</li>` : ''}
+      <li>File name: ${escapeHtml(meta.name || meta.id)}</li>
+      <li>File ID: ${escapeHtml(meta.id)}</li>
+      <li>Size: ${escapeHtml(formatSize(meta.size))}</li>
+      <li>Content type: ${escapeHtml(meta.contentType || 'application/octet-stream')}</li>
+      <li>Uploaded at: ${escapeHtml(meta.uploadedAt || new Date().toISOString())}</li>
+      <li>IP address: ${escapeHtml(sourceIp)}</li>
+      <li>Region: ${escapeHtml(sourceRegion)}</li>
+      ${meta.expiresAt ? `<li>Expires at: ${escapeHtml(meta.expiresAt)}</li>` : ''}
     </ul>
-    <p>相关链接：</p>
+    <p>Relevant links:</p>
     <ul>
-      <li>预览页：<a href="${viewUrl}">${viewUrl}</a></li>
-      <li>下载页：<a href="${downloadUrl}">${downloadUrl}</a></li>
-      <li>播放页：<a href="${playUrl}">${playUrl}</a></li>
+      <li>Preview page: <a href="${viewUrl}">${viewUrl}</a></li>
+      <li>Download page: <a href="${downloadUrl}">${downloadUrl}</a></li>
+      <li>Playback page: <a href="${playUrl}">${playUrl}</a></li>
     </ul>
   </div>`;
+  const text = [
+    'New File Uploaded',
+    '',
+    `File name: ${meta.name || meta.id}`,
+    `File ID: ${meta.id}`,
+    `Size: ${formatSize(meta.size)}`,
+    `Content type: ${meta.contentType || 'application/octet-stream'}`,
+    `Uploaded at: ${meta.uploadedAt || new Date().toISOString()}`,
+    `IP address: ${sourceIp}`,
+    `Region: ${sourceRegion}`,
+    meta.expiresAt ? `Expires at: ${meta.expiresAt}` : '',
+    '',
+    'Relevant links:',
+    `Preview page: ${viewUrl}`,
+    `Download page: ${downloadUrl}`,
+    `Playback page: ${playUrl}`
+  ].filter(Boolean).join('\n');
   try {
     const resendRes = await fetch('https://api.resend.com/emails', {
       method: 'POST',
@@ -3018,12 +4339,13 @@ async function sendUploadNotification(meta, request, env, links = null) {
         from: env.RESEND_FROM_EMAIL,
         to: [UPLOAD_NOTIFY_TO_EMAIL],
         subject: `${UPLOAD_NOTIFY_SUBJECT_PREFIX}: ${meta.name || meta.id}`,
-        html
+        html,
+        text
       })
     });
     if (!resendRes.ok) {
       const errorText = await resendRes.text();
-      throw new Error(`发送上传通知失败: ${errorText}`);
+      throw new Error(`Failed to send upload notification: ${errorText}`);
     }
     return { sent: true };
   } catch (error) {
@@ -3106,6 +4428,154 @@ async function recordDownloadAndGetMeta(id, env) {
   };
 }
 
+async function consumeBurnAfterRead(id, env, meta) {
+  if (!meta?.burnAfterRead || meta?.burnAfterReadConsumedAt) return await readFileMeta(id, env);
+  const consumedAt = new Date().toISOString();
+  const sidecar = await readSidecarMeta(id, env);
+  const nextMeta = {
+    ...(sidecar || {}),
+    id,
+    name: meta.name,
+    size: meta.size,
+    contentType: meta.contentType,
+    uploadedAt: meta.uploadedAt,
+    etag: meta.etag,
+    expiresAt: consumedAt,
+    maxDownloads: meta.maxDownloads,
+    burnAfterRead: true,
+    burnAfterReadConsumedAt: consumedAt,
+    downloadCount: meta.downloadCount || 0,
+    lastDownloadedAt: meta.lastDownloadedAt || '',
+    clientIp: meta.clientIp || '',
+    clientRegion: meta.clientRegion || ''
+  };
+  await saveJsonObject(metaKey(id), nextMeta, env);
+  try {
+    await env.FILES.delete(id);
+  } catch (error) {
+    console.error(error.message || error);
+  }
+  return buildFileMeta(id, nextMeta, null);
+}
+
+async function prepareBurnAfterReadPreviewMeta(id, env, meta) {
+  if (!meta?.burnAfterRead || meta?.burnAfterReadConsumedAt) {
+    return { allowed: true, meta };
+  }
+  const sidecar = await readSidecarMeta(id, env);
+  if (sidecar?.burnAfterReadPreviewToken) {
+    return {
+      allowed: false,
+      meta: buildFileMeta(id, sidecar, null)
+    };
+  }
+  const previewToken = generateId(24);
+  const issuedAt = new Date().toISOString();
+  const nextMeta = {
+    ...(sidecar || {}),
+    id,
+    name: meta.name,
+    size: meta.size,
+    contentType: meta.contentType,
+    uploadedAt: meta.uploadedAt,
+    etag: meta.etag,
+    expiresAt: meta.expiresAt || '',
+    maxDownloads: meta.maxDownloads,
+    burnAfterRead: true,
+    burnAfterReadConsumedAt: meta.burnAfterReadConsumedAt || '',
+    burnAfterReadPreviewToken: previewToken,
+    burnAfterReadPreviewTokenIssuedAt: issuedAt,
+    downloadCount: meta.downloadCount || 0,
+    lastDownloadedAt: meta.lastDownloadedAt || '',
+    clientIp: meta.clientIp || '',
+    clientRegion: meta.clientRegion || ''
+  };
+  await saveJsonObject(metaKey(id), nextMeta, env);
+  return {
+    allowed: true,
+    meta: {
+      ...meta,
+      previewRawUrl: `/raw/${encodeURIComponent(id)}?once=${encodeURIComponent(previewToken)}`
+    }
+  };
+}
+
+async function finalizeUploadedFile(request, env, options) {
+  const {
+    id,
+    filename,
+    declaredType,
+    expectedSize = 0,
+    maxDownloads = null,
+    burnAfterRead = false,
+    expiresAt = null,
+    apiKeyId = null,
+    userId = null,
+    clientIp = '',
+    clientRegion = '',
+    reportedObjectEtag = '',
+    partEtagValidated = false,
+    objectEtagValidated = false,
+    deleteSessionOnSuccess = false
+  } = options || {};
+
+  const head = await env.FILES.head(id);
+  if (!head) return json({ error: 'The file is not present in R2 yet and cannot be finalized' }, 404);
+  if (expectedSize > 0 && head.size !== expectedSize) {
+    return json({ error: `File size mismatch: expected ${expectedSize} bytes, got ${head.size} bytes` }, 409);
+  }
+
+  const objectEtagCheck = validateReportedObjectETag(reportedObjectEtag, head.httpEtag || head.etag || '');
+  if (!objectEtagCheck.ok) {
+    return json({ success: false, error: objectEtagCheck.error }, objectEtagCheck.status);
+  }
+  const didValidateObjectEtag = Boolean(objectEtagValidated || objectEtagCheck.validated);
+
+  const meta = await writeFileMeta(id, filename, declaredType, env, {
+    maxDownloads,
+    burnAfterRead,
+    expiresAt,
+    clientIp,
+    clientRegion
+  });
+  if (apiKeyId) {
+    await incrementApiKeyUploadCount(apiKeyId, env);
+  }
+  const publishOrigin = await resolvePublishOrigin(request, env);
+  const publishLinks = buildPublishedLinks(publishOrigin, id);
+  await recordPublishedFile(id, meta, publishLinks, { apiKeyId, userId, clientIp, clientRegion }, env);
+  try {
+    await sendUploadNotification(meta, request, env, publishLinks);
+  } catch (error) {
+    console.error(error.message || error);
+  }
+  if (deleteSessionOnSuccess) {
+    await deleteUploadSession(id, env);
+  }
+
+  return json({
+    success: true,
+    id,
+    url: publishLinks.url,
+    downloadUrl: publishLinks.downloadUrl,
+    playUrl: publishLinks.playUrl,
+    type: classifyContent(meta?.contentType || declaredType),
+    etag: meta?.etag || normalizeETag(head.httpEtag || head.etag || ''),
+    integrity: {
+      etag: meta?.etag || normalizeETag(head.httpEtag || head.etag || ''),
+      validated: partEtagValidated || didValidateObjectEtag,
+      objectEtagValidated: didValidateObjectEtag,
+      partEtagValidated
+    },
+    expiresAt: meta?.expiresAt ?? null,
+    burnAfterRead: meta?.burnAfterRead ?? false,
+    burnAfterReadConsumedAt: meta?.burnAfterReadConsumedAt ?? null,
+    maxDownloads: meta?.maxDownloads ?? null,
+    downloadCount: meta?.downloadCount ?? 0,
+    remainingDownloads: meta?.remainingDownloads ?? null
+  });
+}
+
 function getRequestApiKey(request, body) {
   return String(request.headers.get('x-api-key') || body?.apiKey || '').trim();
 }
@@ -3115,50 +4585,160 @@ async function handleAuthRequestLink(request, env) {
   try {
     body = await request.json();
   } catch (error) {
-    return json({ error: `请求体必须是 JSON: ${error.message}` }, 400);
+    return json({ error: `Request body must be valid JSON: ${error.message}` }, 400);
   }
   const email = normalizeEmail(body?.email);
-  if (!isEmail(email)) return json({ error: '请输入有效的邮箱地址' }, 400);
+  if (!isEmail(email)) return json({ error: 'Please provide a valid email address' }, 400);
+  const nextPath = sanitizeAccountNextPath(body?.next, localizedAccountPagePath('en', 'overview'));
   try {
-    await sendMagicLink(email, request, env);
-    return json({ success: true, message: '验证链接已发送，请检查邮箱' });
+    await sendMagicLink(email, request, env, nextPath);
+    return json({ success: true, message: 'Verification link sent. Please check your email' });
   } catch (error) {
-    return json({ error: error.message || '发送邮件失败' }, 500);
+    return json({ error: error.message || 'Failed to send email' }, 500);
   }
 }
 
 async function handleVerify(request, env) {
   const url = new URL(request.url);
   const token = String(url.searchParams.get('token') || '').trim();
-  if (!token) return htmlResponse('<h1>验证链接无效</h1>', 400);
+  if (!token) return htmlResponse('<h1>Invalid verification link</h1>', 400);
   const result = await consumeMagicLink(token, env);
   if (result.error) return htmlResponse(`<h1>${escapeHtml(result.error)}</h1>`, 400);
   const sessionToken = await createSession(result.userId, env);
-  return redirect('/account', { 'Set-Cookie': buildSessionCookie(sessionToken, request) });
+  const nextPath = sanitizeAccountNextPath(url.searchParams.get('next'), localizedAccountPagePath('en', 'overview'));
+  return redirect(nextPath, { 'Set-Cookie': buildSessionCookie(sessionToken, request) });
 }
 
 async function handleAccountMe(request, env) {
   const session = await getSessionFromRequest(request, env);
-  if (!session) return json({ error: '请先登录' }, 401);
+  if (!session) return json({ error: 'Please sign in first' }, 401);
+  const detail = String(new URL(request.url).searchParams.get('detail') || 'full').trim().toLowerCase();
+  return json(await buildAccountPayload(session, detail, env));
+}
+
+async function handleAccountFiles(request, env) {
+  const session = await getSessionFromRequest(request, env);
+  if (!session) return json({ error: 'Please sign in first' }, 401);
   return json({
     success: true,
-    email: session.email,
-    isAdmin: session.isAdmin,
-    apiKeys: await listApiKeysForUser(session.userId, env)
+    files: await listFilesForUser(session.userId, env)
+  });
+}
+
+async function handleAccountSites(request, env) {
+  const session = await getSessionFromRequest(request, env);
+  if (!session) return json({ error: 'Please sign in first' }, 401);
+  return json({
+    success: true,
+    sites: await listSitesForUser(session.userId, env)
+  });
+}
+
+async function handleDeleteAccountFile(request, fileId, env) {
+  const session = await getSessionFromRequest(request, env);
+  if (!session) return json({ error: 'Please sign in first' }, 401);
+  await ensurePublishedFilesTable(env);
+  const existing = await env.DB.prepare(
+    `SELECT id, file_name
+     FROM published_files
+     WHERE id = ? AND user_id = ?`
+  ).bind(fileId, session.userId).first();
+  if (!existing) return json({ error: 'File not found' }, 404);
+  await deleteFileAndMeta(fileId, env);
+  return json({
+    success: true,
+    deleted: true,
+    fileId,
+    fileName: existing.file_name || fileId
+  });
+}
+
+async function handleDeleteAccountSite(request, siteId, env) {
+  const session = await getSessionFromRequest(request, env);
+  if (!session) return json({ error: 'Please sign in first' }, 401);
+  await ensureSitesTables(env);
+  const existing = await env.DB.prepare(
+    `SELECT id, name
+     FROM sites
+     WHERE id = ? AND user_id = ?`
+  ).bind(siteId, session.userId).first();
+  if (!existing) return json({ error: 'Site not found' }, 404);
+  await ensureSiteReleaseBackfill(siteId, env);
+  const fileIds = await listSiteStoredFileIds(siteId, env);
+  const retained = await listRetainedFileIdsForDeletedSite(siteId, fileIds, env);
+  const deletableObjectIds = fileIds.filter((fileIdItem) => !retained.has(fileIdItem));
+  await env.DB.batch([
+    env.DB.prepare('DELETE FROM site_release_files WHERE release_id IN (SELECT id FROM site_releases WHERE site_id = ?)').bind(siteId),
+    env.DB.prepare('DELETE FROM site_releases WHERE site_id = ?').bind(siteId),
+    env.DB.prepare('DELETE FROM site_files WHERE site_id = ?').bind(siteId),
+    env.DB.prepare('DELETE FROM sites WHERE id = ? AND user_id = ?').bind(siteId, session.userId)
+  ]);
+  await deleteSiteSession(siteId, env);
+  for (const objectId of deletableObjectIds) {
+    await deleteFileAndMeta(objectId, env);
+  }
+  return json({
+    success: true,
+    deleted: true,
+    siteId,
+    siteName: existing.name || siteId,
+    deletedObjectCount: deletableObjectIds.length,
+    retainedObjectCount: fileIds.length - deletableObjectIds.length
   });
 }
 
 async function handleCreateApiKey(request, env) {
   const session = await getSessionFromRequest(request, env);
-  if (!session) return json({ error: '请先登录' }, 401);
+  if (!session) return json({ error: 'Please sign in first' }, 401);
   let body;
   try {
     body = await request.json();
   } catch (error) {
-    return json({ error: `请求体必须是 JSON: ${error.message}` }, 400);
+    return json({ error: `Request body must be valid JSON: ${error.message}` }, 400);
   }
   const apiKey = await createApiKey(session.userId, body?.name, env);
   return json({ success: true, apiKey });
+}
+
+async function handleAccountUpdateApiKey(request, keyId, env) {
+  const session = await getSessionFromRequest(request, env);
+  if (!session) return json({ error: 'Please sign in first' }, 401);
+  let body;
+  try {
+    body = await request.json();
+  } catch (error) {
+    return json({ error: `Request body must be valid JSON: ${error.message}` }, 400);
+  }
+  const nextStatus = body?.status === 'disabled' ? 'disabled' : body?.status === 'active' ? 'active' : null;
+  if (!nextStatus) return json({ error: 'status must be active or disabled' }, 400);
+  const existing = await env.DB.prepare(
+    `SELECT id
+     FROM api_keys
+     WHERE id = ? AND user_id = ?`
+  ).bind(keyId, session.userId).first();
+  if (!existing) return json({ error: 'API Key not found' }, 404);
+  await env.DB.prepare(
+    `UPDATE api_keys
+     SET status = ?
+     WHERE id = ? AND user_id = ?`
+  ).bind(nextStatus, keyId, session.userId).run();
+  return json({ success: true, status: nextStatus });
+}
+
+async function handleDeleteApiKey(request, keyId, env) {
+  const session = await getSessionFromRequest(request, env);
+  if (!session) return json({ error: 'Please sign in first' }, 401);
+  const existing = await env.DB.prepare(
+    `SELECT id
+     FROM api_keys
+     WHERE id = ? AND user_id = ?`
+  ).bind(keyId, session.userId).first();
+  if (!existing) return json({ error: 'API Key not found' }, 404);
+  await env.DB.batch([
+    env.DB.prepare('DELETE FROM api_key_usage_windows WHERE api_key_id = ?').bind(keyId),
+    env.DB.prepare('DELETE FROM api_keys WHERE id = ? AND user_id = ?').bind(keyId, session.userId)
+  ]);
+  return json({ success: true });
 }
 
 async function handleLogout(request, env) {
@@ -3168,8 +4748,8 @@ async function handleLogout(request, env) {
 
 async function handleAdminApiKeys(request, env) {
   const session = await getSessionFromRequest(request, env);
-  if (!session) return json({ error: '请先登录' }, 401);
-  if (!session.isAdmin) return json({ error: '没有管理员权限' }, 403);
+  if (!session) return json({ error: 'Please sign in first' }, 401);
+  if (!session.isAdmin) return json({ error: 'Administrator access is required' }, 403);
   const result = await env.DB.prepare(
     `SELECT
         users.id AS user_id,
@@ -3210,13 +4790,13 @@ async function handleAdminApiKeys(request, env) {
 
 async function handleAdminUpdateApiKey(request, keyId, env) {
   const session = await getSessionFromRequest(request, env);
-  if (!session) return json({ error: '请先登录' }, 401);
-  if (!session.isAdmin) return json({ error: '没有管理员权限' }, 403);
+  if (!session) return json({ error: 'Please sign in first' }, 401);
+  if (!session.isAdmin) return json({ error: 'Administrator access is required' }, 403);
   let body;
   try {
     body = await request.json();
   } catch (error) {
-    return json({ error: `请求体必须是 JSON: ${error.message}` }, 400);
+    return json({ error: `Request body must be valid JSON: ${error.message}` }, 400);
   }
   const status = body?.status === 'disabled' ? 'disabled' : 'active';
   const limitPreparePerWindow = Math.max(Number(body?.limitPreparePerWindow || 0), 1);
@@ -3232,8 +4812,8 @@ async function handleAdminUpdateApiKey(request, keyId, env) {
 
 async function handleAdminCleanupExpired(request, env) {
   const session = await getSessionFromRequest(request, env);
-  if (!session) return json({ error: '请先登录' }, 401);
-  if (!session.isAdmin) return json({ error: '没有管理员权限' }, 403);
+  if (!session) return json({ error: 'Please sign in first' }, 401);
+  if (!session.isAdmin) return json({ error: 'Administrator access is required' }, 403);
   let body = {};
   try {
     if (request.headers.get('content-type')?.includes('application/json')) {
@@ -3262,11 +4842,17 @@ async function handleUploadConfig(env) {
     success: true,
     maxSize: MAX_SIZE,
     maxSizeMb: Math.round(MAX_SIZE / 1024 / 1024),
+    quickUploadMaxSize: QUICK_UPLOAD_MAX_SIZE,
+    quickUploadMaxSizeMb: Math.round(QUICK_UPLOAD_MAX_SIZE / 1024 / 1024),
     multipartThreshold: MULTIPART_THRESHOLD,
     multipartThresholdMb: Math.round(MULTIPART_THRESHOLD / 1024 / 1024),
     partSize: PART_SIZE,
     partSizeMb: Math.round(PART_SIZE / 1024 / 1024),
     presignedExpires: PRESIGNED_EXPIRES,
+    burnAfterRead: {
+      supported: true,
+      input: 'burnAfterRead'
+    },
     siteUpload: {
       supported: true,
       maxFiles: SITE_MAX_FILES,
@@ -3282,7 +4868,7 @@ async function handleSitePrepare(request, env) {
   try {
     body = await request.json();
   } catch (error) {
-    return json({ error: `请求体必须是 JSON: ${error.message}` }, 400);
+    return json({ error: `Request body must be valid JSON: ${error.message}` }, 400);
   }
 
   const rawApiKey = getRequestApiKey(request, body);
@@ -3290,28 +4876,31 @@ async function handleSitePrepare(request, env) {
   let session = null;
   if (rawApiKey) {
     apiKey = await getApiKeyByRaw(rawApiKey, env);
-    if (!apiKey) return json({ error: 'API Key 无效' }, 401);
+    if (!apiKey) return json({ error: 'Invalid API key' }, 401);
   } else {
     session = await getSessionFromRequest(request, env);
     const ip = getClientIp(request);
     const prepareLimit = takeRateLimit(prepareRateBuckets, `site-prepare:${ip}`, Math.max(10, Math.floor(PREPARE_RATE_LIMIT / 4)), PREPARE_RATE_WINDOW_MS);
     if (!prepareLimit.success) {
-      return json({ error: `站点准备请求过多，请 ${(prepareLimit.resetInMs / 1000).toFixed(0)} 秒后再试` }, 429);
+      return json({ error: `Too many site prepare requests. Retry in ${(prepareLimit.resetInMs / 1000).toFixed(0)} seconds` }, 429);
     }
   }
 
-  const expiresAt = normalizeExpiresAt(body?.expiresAt);
-  if (Number.isNaN(expiresAt)) {
-    return json({ error: 'expiresAt 必须是有效的 ISO 8601 时间字符串' }, 400);
+  const requestedExpiresAt = normalizeExpiresAt(body?.expiresAt);
+  if (Number.isNaN(requestedExpiresAt)) {
+    return json({ error: 'expiresAt must be a valid ISO 8601 timestamp' }, 400);
   }
-  if (typeof expiresAt === 'string' && isExpiredAt(expiresAt)) {
-    return json({ error: 'expiresAt 已经过期，请传入未来时间' }, 400);
+  if (typeof requestedExpiresAt === 'string' && isExpiredAt(requestedExpiresAt)) {
+    return json({ error: 'expiresAt must be set to a future time' }, 400);
+  }
+  if (body?.siteName != null && sanitizeSiteName(body.siteName) !== String(body.siteName).trim()) {
+    return json({ error: 'siteName contains invalid characters' }, 400);
   }
 
   const inputFiles = Array.isArray(body?.files) ? body.files : [];
-  if (!inputFiles.length) return json({ error: '站点清单不能为空' }, 400);
+  if (!inputFiles.length) return json({ error: 'Site manifest cannot be empty' }, 400);
   if (inputFiles.length > SITE_MAX_FILES) {
-    return json({ error: `站点文件数过多，当前阶段最多支持 ${SITE_MAX_FILES} 个文件` }, 400);
+    return json({ error: `Too many site files. The current limit is ${SITE_MAX_FILES} files` }, 400);
   }
 
   let totalSize = 0;
@@ -3320,14 +4909,14 @@ async function handleSitePrepare(request, env) {
   for (const item of inputFiles) {
     const relativePath = normalizeRelativePath(item?.path);
     if (typeof relativePath !== 'string') {
-      return json({ error: `存在非法路径：${String(item?.path || '')}` }, 400);
+      return json({ error: `Invalid path: ${String(item?.path || '')}` }, 400);
     }
     const size = Number(item?.size || 0);
     if (!Number.isFinite(size) || size < 1) {
-      return json({ error: `文件大小无效：${relativePath}` }, 400);
+      return json({ error: `Invalid file size: ${relativePath}` }, 400);
     }
     if (size > MAX_SIZE) {
-      return json({ error: `文件过大：${relativePath}，单文件最大支持 ${(MAX_SIZE / 1024 / 1024).toFixed(0)}MB` }, 400);
+      return json({ error: `File is too large: ${relativePath}. Maximum file size is ${(MAX_SIZE / 1024 / 1024).toFixed(0)}MB` }, 400);
     }
     totalSize += size;
     rawPaths.push(relativePath);
@@ -3339,7 +4928,7 @@ async function handleSitePrepare(request, env) {
   }
 
   if (totalSize > SITE_MAX_TOTAL_SIZE) {
-    return json({ error: `站点总大小过大，当前阶段最大支持 ${(SITE_MAX_TOTAL_SIZE / 1024 / 1024).toFixed(0)}MB` }, 400);
+    return json({ error: `Site is too large. Current total size limit is ${(SITE_MAX_TOTAL_SIZE / 1024 / 1024).toFixed(0)}MB` }, 400);
   }
 
   const canonical = stripCommonTopLevelDir(rawPaths);
@@ -3350,7 +4939,7 @@ async function handleSitePrepare(request, env) {
   const seenPaths = new Set();
   for (const item of manifest) {
     if (seenPaths.has(item.relativePath)) {
-      return json({ error: `目录中存在重复路径：${item.relativePath}` }, 400);
+      return json({ error: `Duplicate path found in site manifest: ${item.relativePath}` }, 400);
     }
     seenPaths.add(item.relativePath);
   }
@@ -3366,24 +4955,24 @@ async function handleSitePrepare(request, env) {
     return chooseSiteEntryPath(manifest.map((item) => item.relativePath));
   })();
   if (entryPath && !seenPaths.has(entryPath)) {
-    return json({ error: `入口文件不存在：${entryPath}` }, 400);
+    return json({ error: `Entry file does not exist: ${entryPath}` }, 400);
   }
 
   const requestedSiteId = String(body?.siteId || '').trim();
   const siteUpdateToken = String(body?.siteUpdateToken || '').trim();
   const updateTarget = requestedSiteId ? await getSiteById(requestedSiteId, env) : null;
   if (requestedSiteId && !/^st_[a-z0-9]+$/i.test(requestedSiteId)) {
-    return json({ error: '无效的站点 ID' }, 400);
+    return json({ error: 'Invalid site ID' }, 400);
   }
   if (requestedSiteId && !updateTarget) {
-    return json({ error: '要更新的站点不存在' }, 404);
+    return json({ error: 'The site to update does not exist' }, 404);
   }
   const updateTokenPayload = updateTarget && siteUpdateToken
     ? await readSiteUpdateToken(siteUpdateToken, env)
     : null;
   const canManageViaToken = updateTarget && isValidSiteUpdateTokenPayload(updateTokenPayload, updateTarget.id);
   if (updateTarget && !canManageSite(updateTarget, { session, apiKey }) && !canManageViaToken) {
-    return json({ error: '没有更新该站点的权限，请使用所属账户登录或提供对应 API Key' }, 403);
+    return json({ error: 'You do not have permission to update this site. Sign in with the owning account or provide the matching API key' }, 403);
   }
   if (updateTarget) {
     await ensureSiteReleaseBackfill(updateTarget.id, env);
@@ -3401,9 +4990,11 @@ async function handleSitePrepare(request, env) {
   const nextVersionNo = updateTarget ? await getNextSiteReleaseVersion(siteId, env) : 1;
   const siteName = sanitizeSiteName(body?.siteName || updateTarget?.name || canonical.sharedRoot || entryPath.split('/')[0] || siteId);
   const createdAt = new Date().toISOString();
-  const effectiveExpiresAt = typeof expiresAt === 'string'
-    ? expiresAt
-    : (updateTarget?.expiresAt || null);
+  const effectiveExpiresAt = resolveDefaultExpiresAt(requestedExpiresAt, {
+    apiKey,
+    session,
+    fallbackExpiresAt: updateTarget?.expiresAt || null
+  });
   await saveSiteSession(siteId, {
     id: siteId,
     siteToken,
@@ -3450,21 +5041,23 @@ async function handleUploadPrepare(request, env) {
   try {
     body = await request.json();
   } catch (error) {
-    return json({ error: `请求体必须是 JSON: ${error.message}` }, 400);
+    return json({ error: `Request body must be valid JSON: ${error.message}` }, 400);
   }
 
   const rawApiKey = getRequestApiKey(request, body);
   let apiKey = null;
+  let session = null;
   if (rawApiKey) {
     apiKey = await getApiKeyByRaw(rawApiKey, env);
-    if (!apiKey) return json({ error: 'API Key 无效' }, 401);
+    if (!apiKey) return json({ error: 'Invalid API key' }, 401);
     const quota = await consumeApiKeyPrepare(apiKey, env);
     if (!quota.ok) return json({ error: quota.error }, quota.status);
   } else {
+    session = await getSessionFromRequest(request, env);
     const ip = getClientIp(request);
     const prepareLimit = takeRateLimit(prepareRateBuckets, `prepare:${ip}`, PREPARE_RATE_LIMIT, PREPARE_RATE_WINDOW_MS);
     if (!prepareLimit.success) {
-      return json({ error: `上载准备请求过多，请 ${(prepareLimit.resetInMs / 1000).toFixed(0)} 秒后再试` }, 429);
+      return json({ error: `Too many upload prepare requests. Retry in ${(prepareLimit.resetInMs / 1000).toFixed(0)} seconds` }, 429);
     }
   }
 
@@ -3472,15 +5065,24 @@ async function handleUploadPrepare(request, env) {
   const size = Number(body?.size || 0);
   const preferredPartSize = Number(body?.preferredPartSize || 0);
   const maxDownloads = normalizeMaxDownloads(body?.maxDownloads);
-  const expiresAt = normalizeExpiresAt(body?.expiresAt);
+  const burnAfterRead = normalizeBurnAfterRead(body?.burnAfterRead);
+  const requestedExpiresAt = normalizeExpiresAt(body?.expiresAt);
+  const clientIp = getClientIp(request);
+  const clientRegion = getClientRegion(request);
   if (Number.isNaN(maxDownloads)) {
-    return json({ error: 'maxDownloads 必须是大于 0 的整数' }, 400);
+    return json({ error: 'maxDownloads must be an integer greater than 0' }, 400);
   }
-  if (Number.isNaN(expiresAt)) {
-    return json({ error: 'expiresAt 必须是有效的 ISO 8601 时间字符串' }, 400);
+  if (Number.isNaN(burnAfterRead)) {
+    return json({ error: 'burnAfterRead must be a boolean' }, 400);
   }
-  if (typeof expiresAt === 'string' && isExpiredAt(expiresAt)) {
-    return json({ error: 'expiresAt 已经过期，请传入未来时间' }, 400);
+  if (Number.isNaN(requestedExpiresAt)) {
+    return json({ error: 'expiresAt must be a valid ISO 8601 timestamp' }, 400);
+  }
+  if (typeof requestedExpiresAt === 'string' && isExpiredAt(requestedExpiresAt)) {
+    return json({ error: 'expiresAt must be set to a future time' }, 400);
+  }
+  if (typeof filename !== 'string') {
+    return json({ error: 'filename is required and must not contain path separators or control characters' }, 400);
   }
   let actualPartSize = PART_SIZE;
   if (preferredPartSize >= 5 * 1024 * 1024 && preferredPartSize <= 100 * 1024 * 1024) {
@@ -3488,22 +5090,26 @@ async function handleUploadPrepare(request, env) {
   }
   
   const detectedType = contentTypeFromName(filename, body?.contentType);
-  if (!size || size < 1) return json({ error: '文件为空' }, 400);
-  if (size > MAX_SIZE) return json({ error: `文件过大，最大支持 ${(MAX_SIZE / 1024 / 1024).toFixed(0)}MB` }, 400);
+  if (!size || size < 1) return json({ error: 'File is empty' }, 400);
+  if (size > MAX_SIZE) return json({ error: `File is too large. Maximum supported size is ${(MAX_SIZE / 1024 / 1024).toFixed(0)}MB` }, 400);
 
   const id = generateId();
   const publishOrigin = await resolvePublishOrigin(request, env);
   const publishLinks = buildPublishedLinks(publishOrigin, id);
+  const effectiveExpiresAt = resolveDefaultExpiresAt(requestedExpiresAt, { apiKey, session });
   const baseSession = {
     id,
     apiKeyId: apiKey?.id || null,
-    userId: apiKey?.userId || null,
+    userId: apiKey?.userId || session?.userId || null,
     name: filename,
     size,
     contentType: detectedType,
     createdAt: new Date().toISOString(),
     maxDownloads,
-    expiresAt: typeof expiresAt === 'string' ? expiresAt : null
+    burnAfterRead: Boolean(burnAfterRead),
+    expiresAt: effectiveExpiresAt,
+    clientIp,
+    clientRegion
   };
   const responseBase = {
     success: true,
@@ -3513,9 +5119,10 @@ async function handleUploadPrepare(request, env) {
     downloadUrl: publishLinks.downloadUrl,
     playUrl: publishLinks.playUrl,
     type: classifyContent(detectedType),
+    burnAfterRead: Boolean(burnAfterRead),
     maxDownloads,
-    expiresAt: typeof expiresAt === 'string' ? expiresAt : null,
-    limits: buildPrepareLimits(apiKey, actualPartSize, maxDownloads),
+    expiresAt: effectiveExpiresAt,
+    limits: buildPrepareLimits(apiKey, actualPartSize, maxDownloads, Boolean(burnAfterRead)),
     integrity: {
       etag: {
         supported: true,
@@ -3539,7 +5146,9 @@ async function handleUploadPrepare(request, env) {
           name: filename,
           uploadedAt: new Date().toISOString(),
           size: String(size),
-          contentType: detectedType
+          contentType: detectedType,
+          clientIp,
+          clientRegion
         }
       });
       const totalParts = Math.ceil(size / actualPartSize);
@@ -3560,7 +5169,7 @@ async function handleUploadPrepare(request, env) {
         parts
       });
     } catch (error) {
-      return json({ error: error.message || '创建分片上载失败' }, 500);
+      return json({ error: error.message || 'Failed to create multipart upload' }, 500);
     }
   }
 
@@ -3574,8 +5183,113 @@ async function handleUploadPrepare(request, env) {
       uploadUrl
     });
   } catch (error) {
-    return json({ error: error.message || '生成预签名上载链接失败' }, 500);
+    return json({ error: error.message || 'Failed to generate presigned upload URL' }, 500);
   }
+}
+
+async function handleUploadQuick(request, env) {
+  let form;
+  try {
+    form = await request.formData();
+  } catch (error) {
+    return json({ error: `Request body must be multipart/form-data: ${error.message}` }, 400);
+  }
+
+  const file = form.get('file');
+  if (!file || typeof file !== 'object' || typeof file.stream !== 'function') {
+    return json({ error: 'Field "file" is required' }, 400);
+  }
+
+  const filename = sanitizeFilename(String(form.get('filename') || file.name || ''), { fallback: null });
+  const size = Number(file.size || 0);
+  const detectedType = contentTypeFromName(filename, String(form.get('contentType') || file.type || ''));
+  const maxDownloads = normalizeMaxDownloads(form.get('maxDownloads'));
+  const burnAfterRead = normalizeBurnAfterRead(form.get('burnAfterRead'));
+  const expiresAt = normalizeExpiresAt(form.get('expiresAt'));
+
+  if (Number.isNaN(maxDownloads)) {
+    return json({ error: 'maxDownloads must be an integer greater than 0' }, 400);
+  }
+  if (Number.isNaN(burnAfterRead)) {
+    return json({ error: 'burnAfterRead must be a boolean' }, 400);
+  }
+  if (Number.isNaN(expiresAt)) {
+    return json({ error: 'expiresAt must be a valid ISO 8601 timestamp' }, 400);
+  }
+  if (typeof expiresAt === 'string' && isExpiredAt(expiresAt)) {
+    return json({ error: 'expiresAt must be set to a future time' }, 400);
+  }
+  if (typeof filename !== 'string') {
+    return json({ error: 'filename is required and must not contain path separators or control characters' }, 400);
+  }
+  if (!size || size < 1) {
+    return json({ error: 'File is empty' }, 400);
+  }
+  if (size > QUICK_UPLOAD_MAX_SIZE) {
+    return json({
+      error: `Files larger than ${Math.round(QUICK_UPLOAD_MAX_SIZE / 1024 / 1024)}MB must use /api/upload/prepare + PUT + /api/upload/complete`,
+      code: 'QUICK_UPLOAD_TOO_LARGE',
+      quickUploadMaxSize: QUICK_UPLOAD_MAX_SIZE
+    }, 400);
+  }
+
+  const body = {
+    apiKey: String(form.get('apiKey') || '').trim()
+  };
+  const rawApiKey = getRequestApiKey(request, body);
+  let apiKey = null;
+  let session = null;
+  if (rawApiKey) {
+    apiKey = await getApiKeyByRaw(rawApiKey, env);
+    if (!apiKey) return json({ error: 'Invalid API key' }, 401);
+    const quota = await consumeApiKeyPrepare(apiKey, env);
+    if (!quota.ok) return json({ error: quota.error }, quota.status);
+  } else {
+    session = await getSessionFromRequest(request, env);
+    const ip = getClientIp(request);
+    const prepareLimit = takeRateLimit(prepareRateBuckets, `prepare:${ip}`, PREPARE_RATE_LIMIT, PREPARE_RATE_WINDOW_MS);
+    if (!prepareLimit.success) {
+      return json({ error: `Too many upload prepare requests. Retry in ${(prepareLimit.resetInMs / 1000).toFixed(0)} seconds` }, 429);
+    }
+  }
+
+  const id = generateId();
+  const clientIp = getClientIp(request);
+  const clientRegion = getClientRegion(request);
+  const effectiveExpiresAt = resolveDefaultExpiresAt(expiresAt, { apiKey, session });
+  try {
+    await env.FILES.put(id, file.stream(), {
+      httpMetadata: {
+        contentType: detectedType,
+        cacheControl: DEFAULT_CACHE,
+        contentDisposition: `inline; filename*=UTF-8''${encodeURIComponent(filename)}`
+      },
+      customMetadata: {
+        name: filename,
+        uploadedAt: new Date().toISOString(),
+        size: String(size),
+        contentType: detectedType,
+        clientIp,
+        clientRegion
+      }
+    });
+  } catch (error) {
+    return json({ error: error.message || 'Quick upload failed' }, 500);
+  }
+
+  return finalizeUploadedFile(request, env, {
+    id,
+    filename,
+    declaredType: detectedType,
+    expectedSize: size,
+    maxDownloads,
+    burnAfterRead: Boolean(burnAfterRead),
+    expiresAt: effectiveExpiresAt,
+    apiKeyId: apiKey?.id || null,
+    userId: apiKey?.userId || session?.userId || null,
+    clientIp,
+    clientRegion
+  });
 }
 
 async function handleUploadComplete(request, env) {
@@ -3583,12 +5297,27 @@ async function handleUploadComplete(request, env) {
   try {
     body = await request.json();
   } catch (error) {
-    return json({ error: `请求体必须是 JSON: ${error.message}` }, 400);
+    return json({ error: `Request body must be valid JSON: ${error.message}` }, 400);
   }
   const id = String(body?.id || '').trim();
-  if (!/^[a-z0-9]+$/i.test(id)) return json({ error: '无效的文件 ID' }, 400);
+  if (!/^[a-z0-9]+$/i.test(id)) return json({ error: 'Invalid file ID' }, 400);
   const session = await readUploadSession(id, env);
-  if (!session) return json({ error: '上载会话不存在或已过期，请重新调用 prepare' }, 404);
+  if (!session) {
+    const head = await env.FILES.head(id);
+    if (head) {
+      return json({
+        error: 'Upload already completed',
+        code: 'UPLOAD_ALREADY_COMPLETED',
+        id
+      }, 409);
+    }
+    return json({
+      error: 'Upload session not found. Reuse the exact id returned by the matching prepare call, then start over with prepare if needed',
+      code: 'UPLOAD_SESSION_NOT_FOUND',
+      id,
+      hint: 'expiresIn only describes the signed uploadUrl or parts[].uploadUrl lifetime, not a Worker-side upload session TTL'
+    }, 404);
+  }
   const filename = sanitizeFilename(session.name || id);
   const expectedSize = Number(session.size || 0);
   const declaredType = contentTypeFromName(filename, session.contentType);
@@ -3618,58 +5347,25 @@ async function handleUploadComplete(request, env) {
       const multipart = env.FILES.resumeMultipartUpload(id, session.uploadId);
       await multipart.complete(uploadedParts);
     } catch (error) {
-      return json({ error: error.message || '完成分片上载失败' }, 500);
+      return json({ error: error.message || 'Failed to complete multipart upload' }, 500);
     }
   }
-
-  const head = await env.FILES.head(id);
-  if (!head) return json({ error: '文件尚未上载到 R2，无法完成确认' }, 404);
-  if (expectedSize > 0 && head.size !== expectedSize) {
-    return json({ error: `文件大小不匹配，期望 ${expectedSize} 字节，实际 ${head.size} 字节` }, 409);
-  }
-  const objectEtagCheck = validateReportedObjectETag(reportedObjectEtag, head.httpEtag || head.etag || '');
-  if (!objectEtagCheck.ok) {
-    return json({ success: false, error: objectEtagCheck.error }, objectEtagCheck.status);
-  }
-  objectEtagValidated = Boolean(objectEtagCheck.validated);
-
-  const meta = await writeFileMeta(id, filename, declaredType, env, {
-    maxDownloads: session.maxDownloads,
-    expiresAt: session.expiresAt
-  });
-  if (session?.apiKeyId) {
-    await incrementApiKeyUploadCount(session.apiKeyId, env);
-  }
-  const publishOrigin = await resolvePublishOrigin(request, env);
-  const publishLinks = buildPublishedLinks(publishOrigin, id);
-  await recordPublishedFile(id, meta, publishLinks, session, env);
-  try {
-    await sendUploadNotification(meta, request, env, publishLinks);
-  } catch (error) {
-    console.error(error.message || error);
-  }
-  if (session) {
-    await deleteUploadSession(id, env);
-  }
-
-  return json({
-    success: true,
+  return finalizeUploadedFile(request, env, {
     id,
-    url: publishLinks.url,
-    downloadUrl: publishLinks.downloadUrl,
-    playUrl: publishLinks.playUrl,
-    type: classifyContent(meta?.contentType || declaredType),
-    etag: meta?.etag || normalizeETag(head.httpEtag || head.etag || ''),
-    integrity: {
-      etag: meta?.etag || normalizeETag(head.httpEtag || head.etag || ''),
-      validated: partEtagValidated || objectEtagValidated,
-      objectEtagValidated,
-      partEtagValidated
-    },
-    expiresAt: meta?.expiresAt ?? null,
-    maxDownloads: meta?.maxDownloads ?? null,
-    downloadCount: meta?.downloadCount ?? 0,
-    remainingDownloads: meta?.remainingDownloads ?? null
+    filename,
+    declaredType,
+    expectedSize,
+    maxDownloads: session.maxDownloads,
+    burnAfterRead: session.burnAfterRead,
+    expiresAt: session.expiresAt,
+    apiKeyId: session.apiKeyId || null,
+    userId: session.userId || null,
+    clientIp: session.clientIp || '',
+    clientRegion: session.clientRegion || '',
+    reportedObjectEtag,
+    partEtagValidated,
+    objectEtagValidated,
+    deleteSessionOnSuccess: true
   });
 }
 
@@ -3680,7 +5376,7 @@ async function handleUploadStatus(request, id, env) {
     if (head) {
       return json({ id, status: 'done', bytesReceived: head.size });
     }
-    return json({ error: '未找到该上载任务' }, 404);
+    return json({ error: 'Upload task not found' }, 404);
   }
 
   if (session.mode === 'multipart') {
@@ -3712,22 +5408,29 @@ async function handleSiteComplete(request, env) {
   try {
     body = await request.json();
   } catch (error) {
-    return json({ error: `请求体必须是 JSON: ${error.message}` }, 400);
+    return json({ error: `Request body must be valid JSON: ${error.message}` }, 400);
   }
 
   const siteId = String(body?.siteId || '').trim();
-  if (!/^st_[a-z0-9]+$/i.test(siteId)) return json({ error: '无效的站点 ID' }, 400);
+  if (!/^st_[a-z0-9]+$/i.test(siteId)) return json({ error: 'Invalid site ID' }, 400);
   const siteToken = String(body?.siteToken || '').trim();
-  if (!siteToken) return json({ error: '缺少站点完成令牌' }, 400);
+  if (!siteToken) return json({ error: 'Missing site completion token' }, 400);
 
   const session = await readSiteSession(siteId, env);
-  if (!session) return json({ error: '站点上载会话不存在或已过期，请重新准备' }, 404);
-  if (siteToken !== session.siteToken) return json({ error: '站点完成令牌无效' }, 403);
+  if (!session) {
+    return json({
+      error: 'Site upload session not found. Reuse the exact siteId and siteToken returned by the matching site prepare call, then prepare again if needed',
+      code: 'SITE_SESSION_NOT_FOUND',
+      siteId,
+      hint: 'The siteToken returned by site prepare is bound to one site upload session and cannot be reused across prepare calls'
+    }, 404);
+  }
+  if (siteToken !== session.siteToken) return json({ error: 'Invalid site completion token' }, 403);
 
   const inputFiles = Array.isArray(body?.files) ? body.files : [];
-  if (!inputFiles.length) return json({ error: '站点文件清单不能为空' }, 400);
+  if (!inputFiles.length) return json({ error: 'Site file list cannot be empty' }, 400);
   if (inputFiles.length !== Number(session.fileCount || 0)) {
-    return json({ error: '站点文件数量与 prepare 阶段不一致' }, 409);
+    return json({ error: 'Site file count does not match the prepare phase' }, 409);
   }
 
   const canonical = stripCommonTopLevelDir(inputFiles.map((item) => item?.relativePath));
@@ -3738,18 +5441,18 @@ async function handleSiteComplete(request, env) {
     const relativePath = canonical.paths[index] || normalizeRelativePath(item?.relativePath);
     const fileId = String(item?.fileId || '').trim();
     if (typeof relativePath !== 'string') {
-      return json({ error: '存在非法 relativePath' }, 400);
+      return json({ error: 'Invalid relativePath' }, 400);
     }
     if (!/^[a-z0-9]+$/i.test(fileId)) {
-      return json({ error: `存在非法文件 ID：${fileId}` }, 400);
+      return json({ error: `Invalid file ID: ${fileId}` }, 400);
     }
     const expectedItem = expected.get(relativePath);
     if (!expectedItem) {
-      return json({ error: `文件不在 prepare 清单中：${relativePath}` }, 409);
+      return json({ error: `File is not present in the prepare manifest: ${relativePath}` }, 409);
     }
     const meta = await readFileMeta(fileId, env);
     if (!meta) {
-      return json({ error: `文件尚未完成上传：${relativePath}` }, 409);
+      return json({ error: `File has not finished uploading: ${relativePath}` }, 409);
     }
     mappedFiles.push({
       relativePath,
@@ -3767,7 +5470,7 @@ async function handleSiteComplete(request, env) {
 
   if (expected.size > 0) {
     return json({
-      error: '仍有文件未完成站点发布',
+      error: 'Some files are still missing from the site publish step',
       missingPaths: Array.from(expected.keys())
     }, 409);
   }
@@ -3822,17 +5525,23 @@ async function handleSiteComplete(request, env) {
 
 function siteNotFoundHTML(siteId, requestedPath = '') {
   const suffix = requestedPath ? ` / ${escapeHtml(requestedPath)}` : '';
-  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>站点不存在 - OkFile</title>
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#0a0a0a;color:#fff;display:flex;align-items:center;justify-content:center;min-height:100vh}.wrap{text-align:center;padding:24px;max-width:640px}.icon{font-size:64px;margin-bottom:20px}h1{font-size:24px;font-weight:600;margin-bottom:12px;color:#ef4444}p{color:#9ca3af;font-size:14px;line-height:1.8;margin-bottom:16px}a{color:#60a5fa;text-decoration:none;border:1px solid #333;padding:8px 20px;border-radius:8px;display:inline-block}a:hover{border-color:#60a5fa}</style></head>
-<body><div class="wrap"><div class="icon">📂</div><h1>站点文件不存在</h1><p>未找到站点 <code>${escapeHtml(siteId)}</code>${suffix}。</p><a href="/">返回 OkFile 首页</a></div></body></html>`;
+  return publicInfoPageHTML({
+    title: 'Site Not Found',
+    icon: '📂',
+    heading: 'Site Not Found',
+    body: `<p>Site <code>${escapeHtml(siteId)}</code>${suffix} was not found.</p>`,
+    tone: 'danger',
+  });
 }
 
 function expiredSiteHTML(site) {
-  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>站点已过期 - OkFile</title>
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#0a0a0a;color:#fff;display:flex;align-items:center;justify-content:center;min-height:100vh}.wrap{text-align:center;padding:24px;max-width:640px}.icon{font-size:64px;margin-bottom:20px}h1{font-size:24px;font-weight:600;margin-bottom:12px;color:#f59e0b}p{color:#9ca3af;font-size:14px;line-height:1.8;margin-bottom:16px}a{color:#60a5fa;text-decoration:none;border:1px solid #333;padding:8px 20px;border-radius:8px;display:inline-block}a:hover{border-color:#60a5fa}</style></head>
-<body><div class="wrap"><div class="icon">⏳</div><h1>站点已过期</h1><p>站点 <code>${escapeHtml(site?.name || site?.id || 'unknown')}</code> 已超过可访问期限。</p>${site?.expiresAt ? `<p>过期时间：<code>${escapeHtml(site.expiresAt)}</code></p>` : ''}<a href="/">返回 OkFile 首页</a></div></body></html>`;
+  return publicInfoPageHTML({
+    title: 'Site Expired',
+    icon: '⏳',
+    heading: 'Site Expired',
+    body: `<p>Site <code>${escapeHtml(site?.name || site?.id || 'unknown')}</code> is no longer available.</p>${site?.expiresAt ? `<p>Expired at: <code>${escapeHtml(site.expiresAt)}</code></p>` : ''}`,
+    tone: 'warning',
+  });
 }
 
 async function sitePage(site, requestedPath, request, env) {
@@ -3872,9 +5581,16 @@ async function sitePage(site, requestedPath, request, env) {
 }
 
 async function viewerPage(id, env) {
-  const meta = await readFileMeta(id, env);
+  let meta = await readFileMeta(id, env);
   if (!meta) return htmlResponse(notFoundHTML(id), 404);
   if (isMetaExpired(meta)) return htmlResponse(expiredFileHTML(meta), 410, { 'Cache-Control': 'no-store' });
+  if (meta?.burnAfterRead) {
+    const previewAccess = await prepareBurnAfterReadPreviewMeta(id, env, meta);
+    if (!previewAccess.allowed) {
+      return htmlResponse(expiredFileHTML(previewAccess.meta || meta), 410, { 'Cache-Control': 'no-store' });
+    }
+    meta = previewAccess.meta;
+  }
   const contentType = meta.contentType || 'application/octet-stream';
   const html = isImage(contentType)
     ? imageViewerPage(meta)
@@ -3883,18 +5599,43 @@ async function viewerPage(id, env) {
       : isPDF(contentType)
         ? pdfViewerPage(meta)
         : genericViewerPage(meta);
-  return htmlResponse(html);
+  return htmlResponse(html, 200, meta?.burnAfterRead ? { 'Cache-Control': 'private, no-store, max-age=0' } : {});
 }
 
 async function rawFile(id, request, env) {
+  const url = new URL(request.url);
   const meta = await readFileMeta(id, env);
   if (isMetaExpired(meta)) {
     return htmlResponse(expiredFileHTML(meta), 410, {
       'Cache-Control': 'no-store'
     });
   }
+  if (request.method === 'GET' && meta?.burnAfterRead) {
+    const sidecar = await readSidecarMeta(id, env);
+    const expectedPreviewToken = typeof sidecar?.burnAfterReadPreviewToken === 'string'
+      ? sidecar.burnAfterReadPreviewToken
+      : '';
+    if (expectedPreviewToken) {
+      const providedPreviewToken = url.searchParams.get('once') || '';
+      if (!providedPreviewToken || providedPreviewToken !== expectedPreviewToken) {
+        return htmlResponse(expiredFileHTML(buildFileMeta(id, sidecar, null) || meta), 410, {
+          'Cache-Control': 'no-store'
+        });
+      }
+    }
+  }
   const fromR2 = await serveR2File(id, request, env, meta);
-  if (fromR2) return fromR2;
+  if (fromR2) {
+    if (meta?.burnAfterRead) {
+      fromR2.headers.set('Cache-Control', 'private, no-store, max-age=0');
+      fromR2.headers.set('Pragma', 'no-cache');
+      fromR2.headers.set('Expires', '0');
+    }
+    if (request.method === 'GET' && meta?.burnAfterRead) {
+      await consumeBurnAfterRead(id, env, meta);
+    }
+    return fromR2;
+  }
   return htmlResponse(notFoundHTML(id), 404);
 }
 
@@ -3919,7 +5660,12 @@ async function controlledDownload(id, request, env) {
     forceAttachment: true,
     cacheControl: 'private, no-store, max-age=0'
   });
-  if (response) return response;
+  if (response) {
+    if (request.method === 'GET' && result.meta?.burnAfterRead) {
+      await consumeBurnAfterRead(id, env, result.meta);
+    }
+    return response;
+  }
   return htmlResponse(notFoundHTML(id), 404, {
     'Cache-Control': 'no-store'
   });
@@ -3932,9 +5678,9 @@ export default {
       url.hostname = 'www.okfile.com';
       return Response.redirect(url.toString(), 301);
     }
-    if (url.hostname === 'ok26.org' || url.hostname === 'www.ok26.org') {
+    if (url.hostname === 'www.ok26.org') {
       url.protocol = 'https:';
-      url.hostname = 'www.okfile.com';
+      url.hostname = 'ok26.org';
       return Response.redirect(url.toString(), 301);
     }
     if ((request.method === 'GET' || request.method === 'HEAD') && canResolveSiteFromHostname(url.hostname)) {
@@ -3977,31 +5723,87 @@ export default {
     }
 
     if (request.method === 'GET' && (url.pathname === '/' || url.pathname === '/index.html')) {
-      return redirect(localizedHomePath('zh'));
+      return redirect(localizedHomePath('en'));
     }
     if (request.method === 'GET' && url.pathname === '/upload.html') {
-      return redirect(localizedUploadPath('zh'));
+      return redirect(localizedUploadPath('en'));
     }
     if (request.method === 'GET' && url.pathname === '/account') {
-      return redirect(localizedAccountPath('zh'));
+      return redirect(localizedAccountPath('en'));
     }
     if (request.method === 'GET' && (url.pathname === '/zh' || url.pathname === '/zh/')) {
-      return renderLocalizedStaticPage(request, env, '/', 'zh', 'home');
+      return redirect(localizedHomePath('en'));
     }
     if (request.method === 'GET' && (url.pathname === '/en' || url.pathname === '/en/')) {
-      return renderLocalizedStaticPage(request, env, '/', 'en', 'home');
+      return renderLocalizedStaticPage(request, env, '/index.html', 'en', 'home');
     }
     if (request.method === 'GET' && (url.pathname === '/zh/upload' || url.pathname === '/zh/upload/')) {
-      return renderLocalizedStaticPage(request, env, '/upload', 'zh', 'upload');
+      return redirect(localizedUploadPath('en'));
     }
     if (request.method === 'GET' && (url.pathname === '/en/upload' || url.pathname === '/en/upload/')) {
-      return renderLocalizedStaticPage(request, env, '/upload', 'en', 'upload');
+      return renderLocalizedStaticPage(request, env, '/upload.html', 'en', 'upload');
     }
-    if (request.method === 'GET' && (url.pathname === '/zh/account' || url.pathname === '/zh/account/')) {
-      return htmlResponse(accountPage('zh'), 200, { 'X-Robots-Tag': 'noindex, follow' });
+    const accountPageByPath = {
+      '/en/account': 'overview',
+      '/en/account/': 'overview',
+      '/en/account/profile': 'profile',
+      '/en/account/profile/': 'profile',
+      '/en/account/storage': 'storage',
+      '/en/account/storage/': 'storage',
+      '/en/account/files': 'files',
+      '/en/account/files/': 'files',
+      '/en/account/sites': 'sites',
+      '/en/account/sites/': 'sites',
+      '/en/account/api-keys': 'api-keys',
+      '/en/account/api-keys/': 'api-keys',
+    };
+    const accountLoginByPath = {
+      '/en/account/login': 'en',
+      '/en/account/login/': 'en',
+    };
+    const accountRedirectByPath = {
+      '/en/account/create-key': localizedAccountPagePath('en', 'api-keys'),
+      '/en/account/create-key/': localizedAccountPagePath('en', 'api-keys'),
+    };
+    const zhAccountRedirectByPath = {
+      '/zh/account': localizedAccountPagePath('en', 'overview'),
+      '/zh/account/': localizedAccountPagePath('en', 'overview'),
+      '/zh/account/profile': localizedAccountPagePath('en', 'profile'),
+      '/zh/account/profile/': localizedAccountPagePath('en', 'profile'),
+      '/zh/account/storage': localizedAccountPagePath('en', 'storage'),
+      '/zh/account/storage/': localizedAccountPagePath('en', 'storage'),
+      '/zh/account/files': localizedAccountPagePath('en', 'files'),
+      '/zh/account/files/': localizedAccountPagePath('en', 'files'),
+      '/zh/account/sites': localizedAccountPagePath('en', 'sites'),
+      '/zh/account/sites/': localizedAccountPagePath('en', 'sites'),
+      '/zh/account/api-keys': localizedAccountPagePath('en', 'api-keys'),
+      '/zh/account/api-keys/': localizedAccountPagePath('en', 'api-keys'),
+      '/zh/account/login': localizedAccountLoginPath('en'),
+      '/zh/account/login/': localizedAccountLoginPath('en'),
+      '/zh/account/create-key': localizedAccountPagePath('en', 'api-keys'),
+      '/zh/account/create-key/': localizedAccountPagePath('en', 'api-keys'),
+    };
+    if (request.method === 'GET' && accountRedirectByPath[url.pathname]) {
+      return redirect(accountRedirectByPath[url.pathname]);
     }
-    if (request.method === 'GET' && (url.pathname === '/en/account' || url.pathname === '/en/account/')) {
-      return htmlResponse(accountPage('en'), 200, { 'X-Robots-Tag': 'noindex, follow' });
+    if (request.method === 'GET' && zhAccountRedirectByPath[url.pathname]) {
+      return redirect(zhAccountRedirectByPath[url.pathname]);
+    }
+    if (request.method === 'GET' && accountLoginByPath[url.pathname]) {
+      const session = await getSessionFromRequest(request, env);
+      const nextPath = sanitizeAccountNextPath(url.searchParams.get('next'), localizedAccountPagePath('en', 'overview'));
+      if (session) return redirect(nextPath);
+      return htmlResponse(accountLoginPage('en', nextPath), 200, { 'X-Robots-Tag': 'noindex, follow' });
+    }
+    if (request.method === 'GET' && accountPageByPath[url.pathname]) {
+      const session = await getSessionFromRequest(request, env);
+      if (!session) {
+        const nextPath = sanitizeAccountNextPath(`${url.pathname}${url.search}${url.hash}`, localizedAccountPagePath('en', 'overview'));
+        return redirect(`${localizedAccountLoginPath('en')}?next=${encodeURIComponent(nextPath)}`);
+      }
+      const pageKey = accountPageByPath[url.pathname];
+      const initialAccountData = await buildAccountPayload(session, accountDetailForPage(pageKey), env);
+      return htmlResponse(accountPage('en', pageKey, session, initialAccountData), 200, { 'X-Robots-Tag': 'noindex, follow' });
     }
     if (url.pathname === '/admin') return redirect(`${ADMIN_PANEL_ORIGIN}/`);
     if (url.pathname === '/auth/verify' && request.method === 'GET') return handleVerify(request, env);
@@ -4009,6 +5811,8 @@ export default {
     if (url.pathname === '/api/auth/request-link' && request.method === 'POST') return handleAuthRequestLink(request, env);
     if (url.pathname === '/api/auth/logout' && request.method === 'POST') return handleLogout(request, env);
     if (url.pathname === '/api/account/me' && request.method === 'GET') return handleAccountMe(request, env);
+    if (url.pathname === '/api/account/files' && request.method === 'GET') return handleAccountFiles(request, env);
+    if (url.pathname === '/api/account/sites' && request.method === 'GET') return handleAccountSites(request, env);
     if (url.pathname === '/api/account/api-keys' && request.method === 'POST') return handleCreateApiKey(request, env);
     if (url.pathname === '/api/admin/api-keys' && request.method === 'GET') return handleAdminApiKeys(request, env);
     if (url.pathname === '/api/admin/cleanup-expired' && request.method === 'POST') return handleAdminCleanupExpired(request, env);
@@ -4017,11 +5821,27 @@ export default {
     if (adminKeyMatch && request.method === 'POST') {
       return handleAdminUpdateApiKey(request, adminKeyMatch[1], env);
     }
+    const accountKeyMatch = url.pathname.match(/^\/api\/account\/api-keys\/([^/]+)$/);
+    const accountFileMatch = url.pathname.match(/^\/api\/account\/files\/([^/]+)$/);
+    const accountSiteMatch = url.pathname.match(/^\/api\/account\/sites\/([^/]+)$/);
+    if (accountKeyMatch && request.method === 'PATCH') {
+      return handleAccountUpdateApiKey(request, accountKeyMatch[1], env);
+    }
+    if (accountKeyMatch && request.method === 'DELETE') {
+      return handleDeleteApiKey(request, accountKeyMatch[1], env);
+    }
+    if (accountFileMatch && request.method === 'DELETE') {
+      return handleDeleteAccountFile(request, accountFileMatch[1], env);
+    }
+    if (accountSiteMatch && request.method === 'DELETE') {
+      return handleDeleteAccountSite(request, accountSiteMatch[1], env);
+    }
 
     if (url.pathname === '/api/upload/config' && request.method === 'GET') return handleUploadConfig(env);
     if (url.pathname === '/api/site/prepare' && request.method === 'POST') return handleSitePrepare(request, env);
     if (url.pathname === '/api/site/complete' && request.method === 'POST') return handleSiteComplete(request, env);
     if (url.pathname === '/api/upload/prepare' && request.method === 'POST') return handleUploadPrepare(request, env);
+    if (url.pathname === '/api/upload/quick' && request.method === 'POST') return handleUploadQuick(request, env);
     if (url.pathname === '/api/upload/complete' && request.method === 'POST') return handleUploadComplete(request, env);
     
     const statusMatch = url.pathname.match(/^\/api\/upload\/status\/([a-zA-Z0-9]+)$/);
@@ -4034,12 +5854,41 @@ export default {
       return controlledDownload(downloadMatch[1], request, env);
     }
 
+    const rawMatch = url.pathname.match(/^\/raw\/([a-zA-Z0-9]+)$/);
+    if (rawMatch) {
+      return rawFile(rawMatch[1], request, env);
+    }
+
     const viewMatch = url.pathname.match(/^\/i\/([a-zA-Z0-9]+)$/);
     if (viewMatch) {
       const id = viewMatch[1];
-      if (url.searchParams.get('play') === '1') return viewerPage(id, env);
+      if (url.searchParams.get('play') === '1') {
+        return viewerPage(id, env);
+      }
       return rawFile(id, request, env);
     }
+
+    if (url.pathname === '/api/auth/request-link') return methodNotAllowed(request, ['POST']);
+    if (url.pathname === '/api/auth/logout') return methodNotAllowed(request, ['POST']);
+    if (url.pathname === '/api/account/me') return methodNotAllowed(request, ['GET']);
+    if (url.pathname === '/api/account/files') return methodNotAllowed(request, ['GET']);
+    if (url.pathname === '/api/account/sites') return methodNotAllowed(request, ['GET']);
+    if (url.pathname === '/api/account/api-keys') return methodNotAllowed(request, ['POST']);
+    if (url.pathname === '/api/admin/api-keys') return methodNotAllowed(request, ['GET']);
+    if (url.pathname === '/api/admin/cleanup-expired') return methodNotAllowed(request, ['POST']);
+    if (adminKeyMatch) return methodNotAllowed(request, ['POST']);
+    if (accountKeyMatch) return methodNotAllowed(request, ['PATCH', 'DELETE']);
+    if (accountFileMatch) return methodNotAllowed(request, ['DELETE']);
+    if (accountSiteMatch) return methodNotAllowed(request, ['DELETE']);
+    if (url.pathname === '/api/upload/config') return methodNotAllowed(request, ['GET']);
+    if (url.pathname === '/api/site/prepare') return methodNotAllowed(request, ['POST']);
+    if (url.pathname === '/api/site/complete') return methodNotAllowed(request, ['POST']);
+    if (url.pathname === '/api/upload/prepare') return methodNotAllowed(request, ['POST']);
+    if (url.pathname === '/api/upload/quick') return methodNotAllowed(request, ['POST']);
+    if (url.pathname === '/api/upload/complete') return methodNotAllowed(request, ['POST']);
+    if (url.pathname === '/api/upload/status/') return json({ error: 'Missing upload ID' }, 404);
+    if (statusMatch) return methodNotAllowed(request, ['GET']);
+    if (url.pathname.startsWith('/api/')) return json({ error: 'API endpoint not found' }, 404);
 
     return env.ASSETS.fetch(request);
   },

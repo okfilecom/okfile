@@ -7,6 +7,8 @@
 <meta name="description" id="metaDesc" content="OkFile provides agent-first file upload and publish APIs with quick upload for small files, multipart uploads for large files, Python CLI automation, direct links, preview URLs, and static site folder publishing.">
 <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1">
 <meta name="theme-color" content="#f5f7fb">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="shortcut icon" href="/favicon.ico">
 <style>
   *{margin:0;padding:0;box-sizing:border-box}
   :root{
@@ -117,11 +119,11 @@
   </div>
 </div>
 <div class="hero">
-  <div class="badge">V1.2.2 | Files | Sites | API | CLI</div>
+  <div class="badge">V1.2.3 | Files | Sites | API | CLI</div>
   <h1><span class="lead">File &amp; Site Publish Service</span><span class="main">Designed for Agents</span></h1>
-  <p>Publish files or full static sites through one flow across API, CLI, and manual upload.</p>
+  <p>Publish files or full static sites through one flow across API, CLI, and manual upload, including one-time burn-after-read links for sensitive files.</p>
   <div class="actions">
-    <a class="btn-primary" href="https://pypi.org/project/okfile/" target="_blank" rel="noopener">Install from PyPI</a>
+    <a class="btn-primary" href="https://www.npmjs.com/package/@okfilecom/okfile" target="_blank" rel="noopener">Open npm Package</a>
     <a class="btn-outline" href="https://www.okfile.com" target="_blank" rel="noopener">Visit Website</a>
     <a class="btn-outline" href="https://github.com/okfilecom/okfile" target="_blank" rel="noopener">GitHub</a>
   </div>
@@ -168,7 +170,7 @@
         <div class="icon">&#128247;</div>
         <h3>Links and Preview</h3>
       </div>
-      <p>Return direct file links together with preview or playback pages when the file type supports it.</p>
+      <p>Return direct file links together with preview or playback pages, or switch a file to burn-after-read for one-time access.</p>
     </div>
   </div>
 </section>
@@ -185,7 +187,7 @@
       </div>
       <div class="meta-item">
         <div class="label">Version</div>
-        <div class="value">V1.2.2</div>
+        <div class="value">V1.2.3</div>
       </div>
       <div class="meta-item">
         <div class="label">Doc Location</div>
@@ -209,7 +211,7 @@
       </div>
       <div class="meta-item">
         <div class="label">Return Value</div>
-        <div class="value">{success, id, url, downloadUrl, playUrl, type} or {siteUrl, entryUrl}</div>
+        <div class="value">{success, id, url, downloadUrl, playUrl, type, burnAfterRead} or {siteUrl, entryUrl}</div>
       </div>
     </div>
     <div class="code-block">
@@ -239,22 +241,23 @@ Publish Site
 </section>
 <section id="cli-download">
   <h2><span class="num">02</span>CLI Install</h2>
-  <p class="section-desc">Use PyPI by default and keep the wheel as a fallback.</p>
+  <p class="section-desc">Use npm for Node-friendly runs, PyPI for Python installs, and keep the wheel as a fallback.</p>
   <div class="download-box">
-    <p>The current CLI release is available on PyPI and as a direct wheel download.</p>
+    <p>The current CLI release is available as an npm launcher, a PyPI package, and a direct wheel download, with support for burn-after-read uploads.</p>
     <div class="download-actions">
-      <a class="btn-primary" href="https://pypi.org/project/okfile/" target="_blank" rel="noopener">Open PyPI Package</a>
-      <a class="btn-outline" href="/downloads/okfile-1.2.2-py3-none-any.whl" download>Download `okfile` Wheel</a>
+      <a class="btn-primary" href="https://www.npmjs.com/package/@okfilecom/okfile" target="_blank" rel="noopener">Open npm Package</a>
+      <a class="btn-outline" href="https://pypi.org/project/okfile/" target="_blank" rel="noopener">Open PyPI Package</a>
+      <a class="btn-outline" href="/downloads/okfile-1.2.3-py3-none-any.whl" download>Download `okfile` Wheel</a>
       <a class="btn-outline" href="/SKILL.md" target="_blank" rel="noopener">Open Install and API Doc</a>
     </div>
     <div class="download-meta">
       <div class="meta-item">
         <div class="label">Recommended Source</div>
-        <div class="value">Latest PyPI install: `py -3 -m pip install okfile`</div>
+        <div class="value">Node launcher: `npx @okfilecom/okfile --version`</div>
       </div>
       <div class="meta-item">
         <div class="label">Filename</div>
-        <div class="value">`okfile-1.2.2-py3-none-any.whl`</div>
+        <div class="value">`okfile-1.2.3-py3-none-any.whl`</div>
       </div>
       <div class="meta-item">
         <div class="label">Command Name</div>
@@ -262,7 +265,7 @@ Publish Site
       </div>
       <div class="meta-item">
         <div class="label">Install Type</div>
-        <div class="value">Latest PyPI install by default, pinned version or direct `wheel` as fallback</div>
+        <div class="value">npm launcher for Node workflows, PyPI for Python workflows, direct `wheel` as fallback</div>
       </div>
     </div>
     <div class="code-block">
@@ -270,21 +273,25 @@ Publish Site
         <span class="label">Install Commands</span>
         <button onclick="cpCode(this)">Copy</button>
       </div>
-      <pre><code><span class="code-keyword">py</span> -3 -m <span class="code-keyword">pip</span> install <span class="code-string">okfile</span>
+      <pre><code><span class="code-keyword">npx</span> <span class="code-string">@okfilecom/okfile</span> --version
 
-<span class="code-keyword">okfile</span> --version
+<span class="code-keyword">npx</span> <span class="code-string">@okfilecom/okfile</span> upload ./photo.jpg
 
-<span class="code-keyword">py</span> -3 -m <span class="code-keyword">pip</span> install <span class="code-string">okfile==1.2.2</span>
+<span class="code-keyword">npx</span> <span class="code-string">@okfilecom/okfile</span> upload ./secret.pdf <span class="code-flag">--burn-after-read</span>
+
+<span class="code-keyword">npx</span> <span class="code-string">@okfilecom/okfile</span> publish ./my-site
+
+<span class="code-keyword">py</span> -3 -m <span class="code-keyword">pip</span> install <span class="code-string">okfile==1.2.3</span>
 
 <span class="code-keyword">py</span> -3 -m <span class="code-keyword">pip</span> install <span class="code-flag">--upgrade</span> <span class="code-string">okfile</span>
 
-<span class="code-keyword">py</span> -3 -m <span class="code-keyword">pip</span> install <span class="code-string">"https://www.okfile.com/downloads/okfile-1.2.2-py3-none-any.whl"</span></code></pre>
+<span class="code-keyword">py</span> -3 -m <span class="code-keyword">pip</span> install <span class="code-string">"https://www.okfile.com/downloads/okfile-1.2.3-py3-none-any.whl"</span></code></pre>
     </div>
   </div>
 </section>
 <section id="api-doc">
   <h2><span class="num">03</span>API Docs</h2>
-  <p class="section-desc">Start with config, then upload files or publish sites.</p>
+  <p class="section-desc">Start with config, then upload files or publish sites. File uploads can also request one-time burn-after-read links.</p>
   <div class="code-block">
     <div class="code-header">
       <span class="label">Quick Start</span>
@@ -293,11 +300,12 @@ Publish Site
     <pre><code><span class="code-keyword">curl</span> <span class="code-string">"https://www.okfile.com/api/upload/config"</span>
 
 <span class="code-keyword">curl</span> <span class="code-flag">-X POST</span> <span class="code-string">"https://www.okfile.com/api/upload/quick"</span> \
-  <span class="code-flag">-F</span> <span class="code-string">"file=@photo.jpg"</span>
+  <span class="code-flag">-F</span> <span class="code-string">"file=@photo.jpg"</span> \
+  <span class="code-flag">-F</span> <span class="code-string">"burnAfterRead=true"</span>
 
 <span class="code-keyword">curl</span> <span class="code-flag">-X POST</span> <span class="code-string">"https://www.okfile.com/api/upload/prepare"</span> \
   <span class="code-flag">-H</span> <span class="code-string">"Content-Type: application/json"</span> \
-  <span class="code-flag">--data</span> <span class="code-string">'{"filename":"photo.jpg","size":12345,"contentType":"image/jpeg","preferredPartSize":5242880}'</span>
+  <span class="code-flag">--data</span> <span class="code-string">'{"filename":"photo.jpg","size":12345,"contentType":"image/jpeg","preferredPartSize":5242880,"burnAfterRead":true}'</span>
 
 <span class="code-keyword">curl</span> <span class="code-flag">-X POST</span> <span class="code-string">"https://www.okfile.com/api/upload/complete"</span> \
   <span class="code-flag">-H</span> <span class="code-string">"Content-Type: application/json"</span> \
@@ -316,15 +324,15 @@ Publish Site
   <table>
     <tr><th>Method</th><th>Endpoint</th><th>Description</th></tr>
     <tr><td><span class="method method-get">GET</span></td><td><code>/api/upload/config</code></td><td>Discover current quick-upload, multipart, and size limits before starting automation.</td></tr>
-    <tr><td><span class="method method-post">POST</span></td><td><code>/api/upload/quick</code></td><td>Upload a small file directly and receive the same final response shape as upload complete.</td></tr>
-    <tr><td><span class="method method-post">POST</span></td><td><code>/api/upload/prepare</code></td><td>Request a single-upload or multipart upload URL and receive the future public file URLs.</td></tr>
+    <tr><td><span class="method method-post">POST</span></td><td><code>/api/upload/quick</code></td><td>Upload a small file directly and receive the same final response shape as upload complete, including optional <code>burnAfterRead</code>.</td></tr>
+    <tr><td><span class="method method-post">POST</span></td><td><code>/api/upload/prepare</code></td><td>Request a single-upload or multipart upload URL and receive the future public file URLs, with optional one-time burn-after-read behavior.</td></tr>
     <tr><td><span class="method">PUT</span></td><td><code>uploadUrl / parts[].uploadUrl</code></td><td>Upload the file body or each file part directly.</td></tr>
     <tr><td><span class="method method-post">POST</span></td><td><code>/api/upload/complete</code></td><td>Finalize the upload using the returned file id.</td></tr>
     <tr><td><span class="method method-get">GET</span></td><td><code>/api/upload/status/{id}</code></td><td>Query multipart upload progress and status.</td></tr>
     <tr><td><span class="method method-post">POST</span></td><td><code>/api/site/prepare</code></td><td>Create a publish session for a static site folder.</td></tr>
     <tr><td><span class="method method-post">POST</span></td><td><code>/api/site/complete</code></td><td>Finalize static site publishing and receive the site URLs.</td></tr>
-    <tr><td><span class="method method-get">GET</span></td><td><code>/i/{id}</code></td><td>Direct file URL.</td></tr>
-    <tr><td><span class="method method-get">GET</span></td><td><code>/i/{id}?play=1</code></td><td>Preview or playback page for images, videos, and PDFs.</td></tr>
+    <tr><td><span class="method method-get">GET</span></td><td><code>/i/{id}</code></td><td>Direct file URL. When <code>burnAfterRead=true</code>, the first successful read invalidates the file.</td></tr>
+    <tr><td><span class="method method-get">GET</span></td><td><code>/i/{id}?play=1</code></td><td>Preview or playback page for images, videos, and PDFs. Burn-after-read preview links now expire after the first successful open.</td></tr>
   </table>
 </section>
 <footer>

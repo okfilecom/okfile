@@ -2,6 +2,31 @@
 
 All notable changes to this repository are documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- homepage copy and API examples now document burn-after-read one-time links more clearly
+- README now explains that `burnAfterRead=true` applies to direct links, preview pages, and download routes
+
+### Fixed
+
+- burn-after-read preview pages at `/i/{id}?play=1` now expire after the first successful open instead of remaining reusable
+- burn-after-read direct links and preview media responses now use `no-store` caching headers to avoid browser replay from cache
+
+## [1.2.3] - 2026-06-17
+
+### Fixed
+
+- PyPI package long-description examples are refreshed to consistently reference `okfile==1.2.3` and `okfile-1.2.3-py3-none-any.whl`
+- root skill docs and Trae skill docs now match the current published CLI install examples
+
+### Added
+
+- npm launcher package `@okfilecom/okfile@1.2.3`, which bootstraps the published Python CLI for `npx` workflows
+
+- article draft comparing `okfile` skill and CLI usage with a small real-world upload and site publish benchmark
+
 ## [1.2.2] - 2026-06-16
 
 ### Fixed
@@ -80,7 +105,5 @@ All notable changes to this repository are documented in this file.
 ### Cleaned Up
 
 - temporary debug probes, banners, and diagnostic overlays removed from production
-
-## [Unreleased]
 
 - repository About/Topics metadata is still pending higher GitHub permission scope

@@ -79,6 +79,11 @@ def build_parser() -> argparse.ArgumentParser:
     upload_parser.add_argument("--key", help="API key to use for this command")
     upload_parser.add_argument("--origin", help="OkFile origin, defaults to config or https://www.okfile.com")
     upload_parser.add_argument("--max-downloads", type=int, help="Optional max download count")
+    upload_parser.add_argument(
+        "--burn-after-read",
+        action="store_true",
+        help="Invalidate the file after the first successful preview or download",
+    )
     upload_parser.add_argument("--expires-at", help="Optional ISO 8601 expiration timestamp")
     upload_parser.add_argument("--verbose", action="store_true", help="Show debug details for request failures")
     upload_parser.set_defaults(func=cmd_upload)
@@ -121,6 +126,7 @@ def cmd_upload(args: argparse.Namespace) -> int:
     api_key = resolve_api_key(args.key, config)
     path = ensure_file(args.path)
     max_downloads = validate_max_downloads(args.max_downloads)
+    burn_after_read = bool(args.burn_after_read)
     expires_at = validate_expires_at(args.expires_at)
     started_at = time.perf_counter()
 
@@ -133,6 +139,7 @@ def cmd_upload(args: argparse.Namespace) -> int:
             api_key=api_key,
             upload_config=upload_config,
             max_downloads=max_downloads,
+            burn_after_read=burn_after_read,
             expires_at=expires_at,
         )
 
@@ -238,6 +245,7 @@ def upload_site_files(
                     api_key=api_key,
                     upload_config=upload_config,
                     max_downloads=None,
+                    burn_after_read=False,
                     expires_at=expires_at,
                 )
                 uploaded_files.append({"relativePath": relative, "fileId": result["id"]})
@@ -285,6 +293,7 @@ def upload_site_file(
             api_key=api_key,
             upload_config=upload_config,
             max_downloads=None,
+            burn_after_read=False,
             expires_at=expires_at,
         )
 
@@ -389,6 +398,7 @@ def upload_path(
     api_key: str | None,
     upload_config: dict[str, Any],
     max_downloads: int | None,
+    burn_after_read: bool,
     expires_at: str | None,
 ) -> dict[str, Any]:
     size = path.stat().st_size
@@ -400,6 +410,7 @@ def upload_path(
             path=path,
             api_key=api_key,
             max_downloads=max_downloads,
+            burn_after_read=burn_after_read,
             expires_at=expires_at,
         )
     return prepare_upload(
@@ -409,6 +420,7 @@ def upload_path(
         api_key=api_key,
         upload_config=upload_config,
         max_downloads=max_downloads,
+        burn_after_read=burn_after_read,
         expires_at=expires_at,
     )
 
@@ -419,11 +431,14 @@ def quick_upload(
     path: Path,
     api_key: str | None,
     max_downloads: int | None,
+    burn_after_read: bool,
     expires_at: str | None,
 ) -> dict[str, Any]:
     fields = {}
     if max_downloads is not None:
         fields["maxDownloads"] = str(max_downloads)
+    if burn_after_read:
+        fields["burnAfterRead"] = "true"
     if expires_at:
         fields["expiresAt"] = expires_at
 
@@ -448,6 +463,7 @@ def prepare_upload(
     api_key: str | None,
     upload_config: dict[str, Any],
     max_downloads: int | None,
+    burn_after_read: bool,
     expires_at: str | None,
 ) -> dict[str, Any]:
     prepare_body: dict[str, Any] = {
@@ -459,6 +475,8 @@ def prepare_upload(
         prepare_body["apiKey"] = api_key
     if max_downloads is not None:
         prepare_body["maxDownloads"] = max_downloads
+    if burn_after_read:
+        prepare_body["burnAfterRead"] = True
     if expires_at:
         prepare_body["expiresAt"] = expires_at
 
@@ -654,6 +672,7 @@ def print_upload_result(result: dict[str, Any], *, path: Path | None = None, ela
     print(f"URL: {result.get('url', '-')}")
     print(f"Download URL: {result.get('downloadUrl', '-')}")
     print(f"Preview URL: {result.get('playUrl', '-')}")
+    print(f"Burn after read: {'enabled' if result.get('burnAfterRead') else 'disabled'}")
 
 
 def print_site_result(

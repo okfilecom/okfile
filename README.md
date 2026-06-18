@@ -77,6 +77,8 @@ It supports:
 - authenticated uploads with user API keys
 - direct file URLs for download or embedding
 - preview/playback URLs for image, video, and PDF
+- optional burn-after-read links that invalidate after the first successful preview or download
+- one-time preview pages that now also expire after the first successful open when `burnAfterRead=true`
 - multipart upload for large files up to `500MB`
 - phase-1 site directory upload with nested subdirectories and per-site subdomain publish URLs
 - automatic shared top-level directory stripping for folder-based site uploads
@@ -110,6 +112,7 @@ Users can also use:
 - `/en/upload/`
 
 This path is kept as a fallback entry, while API integration remains the recommended flow.
+The page now also exposes a burn-after-read toggle for file uploads.
 
 ### 4. Site Directory Publish
 
@@ -158,6 +161,7 @@ This path is kept as a fallback entry, while API integration remains the recomme
 ### Upload APIs
 
 - `POST /api/upload/prepare`
+- `POST /api/upload/quick`
 - `POST /api/upload/complete`
 - `GET /api/upload/status/{id}`
 
@@ -173,6 +177,13 @@ This path is kept as a fallback entry, while API integration remains the recomme
 - `/i/{id}`: direct file URL
 - `/i/{id}?play=1`: preview/playback page
 - `/d/{id}`: controlled download route
+
+When `burnAfterRead=true`:
+
+- the first successful `GET /i/{id}` invalidates the file
+- the first successful `GET /i/{id}?play=1` invalidates the preview page and the underlying file
+- the first successful `GET /d/{id}` invalidates the file
+- later requests return the expired page instead of the original content
 
 ### Site URLs
 
@@ -242,6 +253,41 @@ The D1 schema is defined in `schema.sql` and includes:
 - `api_key_usage_windows`
 
 ## Upload Notes
+
+Optional file controls:
+
+- `burnAfterRead=true`: invalidate the file after the first successful preview or download
+- `expiresAt`: expire the file at a future ISO 8601 timestamp
+- `maxDownloads`: cap successful download attempts
+
+Behavior notes:
+
+- applies to file uploads only, not site publishing
+- works on direct links, preview pages, and download routes
+- preview pages now use a one-time media token so `playUrl` also expires after the first successful open
+- successful follow-up requests return the expired page with HTTP `410`
+
+CLI example:
+
+```bash
+okfile upload secret.pdf --burn-after-read
+```
+
+Prepare example:
+
+```bash
+curl -X POST "https://www.okfile.com/api/upload/prepare" \
+  -H "Content-Type: application/json" \
+  --data '{"filename":"secret.pdf","size":12345,"contentType":"application/pdf","burnAfterRead":true}'
+```
+
+Quick upload example:
+
+```bash
+curl -X POST "https://www.okfile.com/api/upload/quick" \
+  -F "file=@secret.pdf" \
+  -F "burnAfterRead=true"
+```
 
 See these repo docs for integration details:
 
