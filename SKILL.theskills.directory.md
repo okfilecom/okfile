@@ -70,8 +70,11 @@ curl -X POST "https://www.okfile.com/api/site/complete" \
   --data '{"siteId":"st_xxxx","siteToken":"token_xxxx","files":[{"relativePath":"docs/getting-started.md","fileId":"a3k7m92x"},{"relativePath":"assets/app.css","fileId":"b8f2k19a"},{"relativePath":"images/logo.png","fileId":"c9d0e1f2"}]}'
 ```
 ## Important Notes
-- `apiKey` is optional and is only sent to `prepare`
+- send API keys in the `X-API-Key` header for authenticated `prepare` calls
 - `complete` only needs `id`
+- `expiresIn` only describes the signed `uploadUrl` or `parts[].uploadUrl` lifetime, not a separate Worker-side upload-session TTL
+- keep the exact `id` from the matching `prepare` response until `complete` finishes
+- for site publishing, keep the exact `siteId` and `siteToken` from the matching `site/prepare` response and pass them to the matching `site/complete`
 - if `complete` returns `missingParts`, re-upload only those parts
 - return `url` for direct use and `playUrl` for preview use
 - return `siteUrl` for the published site root and `entryUrl` for the preferred HTML entry

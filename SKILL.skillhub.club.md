@@ -58,8 +58,11 @@ curl -X POST "https://www.okfile.com/api/upload/complete" \
   --data '{"id":"a3k7m92x"}'
 ```
 ## Core Rules
-- send `apiKey` only to `prepare`
+- send API keys in the `X-API-Key` header
 - send only `id` to `complete`
+- `expiresIn` only describes the signed `uploadUrl` or `parts[].uploadUrl` lifetime, not a separate Worker-side upload-session TTL
+- keep the exact `id` from the matching `prepare` response until `complete` finishes
+- for site publishing, keep the exact `siteId` and `siteToken` from the matching `site/prepare` response and pass them to the matching `site/complete`
 - if `complete` returns `missingParts`, re-upload only those parts
 - prefer `url` for direct consumption
 - include `playUrl` when preview matters

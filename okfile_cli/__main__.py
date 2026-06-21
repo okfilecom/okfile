@@ -7,6 +7,7 @@ import json
 import mimetypes
 import os
 import sys
+import threading
 import time
 import traceback
 from pathlib import Path
@@ -23,6 +24,8 @@ UPLOAD_TIMEOUT = 900
 FALLBACK_QUICK_UPLOAD_MAX_SIZE = 5 * 1024 * 1024
 FALLBACK_MULTIPART_THRESHOLD = 25 * 1024 * 1024
 FALLBACK_PART_SIZE = 10 * 1024 * 1024
+DEFAULT_MULTIPART_CONCURRENCY = 3
+MAX_MULTIPART_CONCURRENCY = 10
 DEFAULT_PUBLISH_CONCURRENCY = 5
 MAX_PUBLISH_CONCURRENCY = 10
 PROGRESS_ENABLED = True
@@ -30,6 +33,69 @@ PROGRESS_ENABLED = True
 
 class OkFileError(RuntimeError):
     pass
+
+
+class ProgressTracker:
+    def __init__(
+        self,
+        total_bytes: int,
+        *,
+        total_parts: int | None = None,
+        initial_bytes: int = 0,
+        initial_parts: int = 0,
+    ) -> None:
+        self.total_bytes = max(int(total_bytes), 1)
+        self.total_parts = max(int(total_parts), 0) if total_parts is not None else None
+        self.done_bytes = min(max(int(initial_bytes), 0), self.total_bytes)
+        self.completed_parts = max(int(initial_parts), 0)
+        self.started_at = time.perf_counter()
+        self._lock = threading.Lock()
+
+    def advance(self, delta: int) -> None:
+        if delta <= 0:
+            return
+        with self._lock:
+            self.done_bytes = min(self.total_bytes, self.done_bytes + int(delta))
+            self._render_locked()
+
+    def complete_part(self, part_number: int, *, file_name: str) -> None:
+        with self._lock:
+            self.completed_parts += 1
+            if PROGRESS_ENABLED and sys.stderr.isatty():
+                print("", file=sys.stderr)
+            print(
+                f"Uploaded part {part_number}/{self.total_parts or '?'} for {file_name}",
+                file=sys.stderr,
+            )
+            self._render_locked()
+
+    def finish(self) -> None:
+        with self._lock:
+            self.done_bytes = self.total_bytes
+            self._render_locked(force_complete=True)
+            if PROGRESS_ENABLED and sys.stderr.isatty():
+                print("", file=sys.stderr)
+
+    def _render_locked(self, *, force_complete: bool = False) -> None:
+        if not PROGRESS_ENABLED:
+            return
+        if not sys.stderr.isatty():
+            return
+        done = self.total_bytes if force_complete else self.done_bytes
+        ratio = min(max(done / self.total_bytes, 0.0), 1.0)
+        percent = int(ratio * 100)
+        elapsed = max(time.perf_counter() - self.started_at, 0.001)
+        rate = done / elapsed
+        remaining = max(self.total_bytes - done, 0)
+        eta = remaining / rate if rate > 0 else 0.0
+        parts_suffix = ""
+        if self.total_parts:
+            parts_suffix = f" | parts {self.completed_parts}/{self.total_parts}"
+        message = (
+            f"\rProgress: {percent:3d}% ({format_size(done)} / {format_size(self.total_bytes)})"
+            f" | {format_transfer_rate(rate)} | ETA {format_eta(eta)}{parts_suffix}"
+        )
+        print(message, end="", file=sys.stderr, flush=True)
 
 
 def main() -> int:
@@ -79,12 +145,13 @@ def build_parser() -> argparse.ArgumentParser:
     upload_parser.add_argument("--key", help="API key to use for this command")
     upload_parser.add_argument("--origin", help="OkFile origin, defaults to config or https://www.okfile.com")
     upload_parser.add_argument("--max-downloads", type=int, help="Optional max download count")
-    upload_parser.add_argument(
-        "--burn-after-read",
-        action="store_true",
-        help="Invalidate the file after the first successful preview or download",
-    )
     upload_parser.add_argument("--expires-at", help="Optional ISO 8601 expiration timestamp")
+    upload_parser.add_argument(
+        "--multipart-concurrency",
+        type=int,
+        default=DEFAULT_MULTIPART_CONCURRENCY,
+        help=f"Parallel part uploads for multipart file upload (default: {DEFAULT_MULTIPART_CONCURRENCY}, max: {MAX_MULTIPART_CONCURRENCY})",
+    )
     upload_parser.add_argument("--verbose", action="store_true", help="Show debug details for request failures")
     upload_parser.set_defaults(func=cmd_upload)
 
@@ -126,8 +193,11 @@ def cmd_upload(args: argparse.Namespace) -> int:
     api_key = resolve_api_key(args.key, config)
     path = ensure_file(args.path)
     max_downloads = validate_max_downloads(args.max_downloads)
-    burn_after_read = bool(args.burn_after_read)
     expires_at = validate_expires_at(args.expires_at)
+    multipart_concurrency = max(
+        1,
+        min(int(args.multipart_concurrency or DEFAULT_MULTIPART_CONCURRENCY), MAX_MULTIPART_CONCURRENCY),
+    )
     started_at = time.perf_counter()
 
     with requests.Session() as session:
@@ -139,8 +209,8 @@ def cmd_upload(args: argparse.Namespace) -> int:
             api_key=api_key,
             upload_config=upload_config,
             max_downloads=max_downloads,
-            burn_after_read=burn_after_read,
             expires_at=expires_at,
+            multipart_concurrency=multipart_concurrency,
         )
 
     elapsed_seconds = time.perf_counter() - started_at
@@ -179,8 +249,6 @@ def cmd_publish(args: argparse.Namespace) -> int:
                 for relative, path in files
             ],
         }
-        if api_key:
-            prepare_body["apiKey"] = api_key
         prepared = api_json(
             session,
             "POST",
@@ -245,7 +313,6 @@ def upload_site_files(
                     api_key=api_key,
                     upload_config=upload_config,
                     max_downloads=None,
-                    burn_after_read=False,
                     expires_at=expires_at,
                 )
                 uploaded_files.append({"relativePath": relative, "fileId": result["id"]})
@@ -293,7 +360,6 @@ def upload_site_file(
             api_key=api_key,
             upload_config=upload_config,
             max_downloads=None,
-            burn_after_read=False,
             expires_at=expires_at,
         )
 
@@ -398,8 +464,8 @@ def upload_path(
     api_key: str | None,
     upload_config: dict[str, Any],
     max_downloads: int | None,
-    burn_after_read: bool,
     expires_at: str | None,
+    multipart_concurrency: int = DEFAULT_MULTIPART_CONCURRENCY,
 ) -> dict[str, Any]:
     size = path.stat().st_size
     quick_limit = int(upload_config.get("quickUploadMaxSize") or FALLBACK_QUICK_UPLOAD_MAX_SIZE)
@@ -410,7 +476,6 @@ def upload_path(
             path=path,
             api_key=api_key,
             max_downloads=max_downloads,
-            burn_after_read=burn_after_read,
             expires_at=expires_at,
         )
     return prepare_upload(
@@ -420,8 +485,8 @@ def upload_path(
         api_key=api_key,
         upload_config=upload_config,
         max_downloads=max_downloads,
-        burn_after_read=burn_after_read,
         expires_at=expires_at,
+            multipart_concurrency=multipart_concurrency,
     )
 
 
@@ -431,14 +496,11 @@ def quick_upload(
     path: Path,
     api_key: str | None,
     max_downloads: int | None,
-    burn_after_read: bool,
     expires_at: str | None,
 ) -> dict[str, Any]:
     fields = {}
     if max_downloads is not None:
         fields["maxDownloads"] = str(max_downloads)
-    if burn_after_read:
-        fields["burnAfterRead"] = "true"
     if expires_at:
         fields["expiresAt"] = expires_at
 
@@ -463,20 +525,16 @@ def prepare_upload(
     api_key: str | None,
     upload_config: dict[str, Any],
     max_downloads: int | None,
-    burn_after_read: bool,
     expires_at: str | None,
+    multipart_concurrency: int,
 ) -> dict[str, Any]:
     prepare_body: dict[str, Any] = {
         "filename": path.name,
         "size": path.stat().st_size,
         "contentType": guess_content_type(path),
     }
-    if api_key:
-        prepare_body["apiKey"] = api_key
     if max_downloads is not None:
         prepare_body["maxDownloads"] = max_downloads
-    if burn_after_read:
-        prepare_body["burnAfterRead"] = True
     if expires_at:
         prepare_body["expiresAt"] = expires_at
 
@@ -490,12 +548,18 @@ def prepare_upload(
     )
 
     if prepared.get("mode") == "multipart":
-        parts = upload_multipart_file(session, path, prepared)
+        parts = upload_multipart_file(path, prepared, concurrency=multipart_concurrency)
         completed = complete_upload(session, origin, prepared["id"], None, parts, api_key=api_key)
         retries = 0
         while completed.get("missingParts") and retries < 3:
             retries += 1
-            parts = upload_multipart_file(session, path, prepared, missing_parts=set(completed["missingParts"]), existing_parts=parts)
+            parts = upload_multipart_file(
+                path,
+                prepared,
+                missing_parts=set(completed["missingParts"]),
+                existing_parts=parts,
+                concurrency=multipart_concurrency,
+            )
             completed = complete_upload(session, origin, prepared["id"], None, parts, api_key=api_key)
         if not completed.get("success"):
             raise OkFileError(str(completed.get("error") or "Upload complete failed"))
@@ -516,64 +580,105 @@ def upload_single_file(session: requests.Session, path: Path, upload_url: str) -
     }
 
     print(f"Uploading {path.name} ({size} bytes)", file=sys.stderr)
-    body = path.read_bytes()
-    response = request_or_error(
-        session,
-        "PUT",
-        upload_url,
-        data=body,
-        headers=headers,
-        timeout=UPLOAD_TIMEOUT,
-    )
+    tracker = ProgressTracker(size)
+    with path.open("rb") as handle:
+        response = request_or_error(
+            session,
+            "PUT",
+            upload_url,
+            data=iter_file(handle, size, on_chunk=tracker.advance),
+            headers=headers,
+            timeout=UPLOAD_TIMEOUT,
+        )
 
     if not response.ok:
         raise OkFileError(f"Signed upload failed with HTTP {response.status_code}: {response.text}")
 
-    print_progress(size, size)
-    print("", file=sys.stderr)
+    tracker.finish()
     return normalize_etag(response.headers.get("ETag", ""))
 
 
+def upload_multipart_part(
+    path: Path,
+    part: dict[str, Any],
+    part_size: int,
+    *,
+    tracker: ProgressTracker | None = None,
+) -> dict[str, Any]:
+    part_number = int(part["partNumber"])
+    start = (part_number - 1) * part_size
+    with path.open("rb") as handle:
+        handle.seek(start)
+        chunk = handle.read(part_size)
+    headers = {
+        "Content-Length": str(len(chunk)),
+        "Content-Type": "application/octet-stream",
+    }
+    with requests.Session() as session:
+        data = iter_bytes(chunk, on_chunk=tracker.advance if tracker else None)
+        response = request_or_error(
+            session,
+            "PUT",
+            part["uploadUrl"],
+            data=data,
+            headers=headers,
+            timeout=UPLOAD_TIMEOUT,
+        )
+    if not response.ok:
+        raise OkFileError(
+            f"Multipart upload failed at part {part_number} with HTTP {response.status_code}: {response.text}"
+        )
+    return {
+        "partNumber": part_number,
+        "etag": normalize_etag(response.headers.get("ETag", "")),
+    }
+
+
 def upload_multipart_file(
-    session: requests.Session,
     path: Path,
     prepared: dict[str, Any],
     missing_parts: set[int] | None = None,
     existing_parts: list[dict[str, Any]] | None = None,
+    *,
+    concurrency: int = DEFAULT_MULTIPART_CONCURRENCY,
 ) -> list[dict[str, Any]]:
     part_size = int(prepared["partSize"])
     uploaded_by_number = {int(item["partNumber"]): item for item in (existing_parts or [])}
+    parts_to_upload = [
+        part
+        for part in prepared.get("parts", [])
+        if missing_parts is None or int(part["partNumber"]) in missing_parts
+    ]
+    if not parts_to_upload:
+        return [uploaded_by_number[index] for index in sorted(uploaded_by_number)]
 
-    with path.open("rb") as handle:
-        for part in prepared.get("parts", []):
-            part_number = int(part["partNumber"])
-            if missing_parts is not None and part_number not in missing_parts:
-                continue
-            start = (part_number - 1) * part_size
-            handle.seek(start)
-            chunk = handle.read(part_size)
-            headers = {
-                "Content-Length": str(len(chunk)),
-                "Content-Type": "application/octet-stream",
-            }
-            response = request_or_error(
-                session,
-                "PUT",
-                part["uploadUrl"],
-                data=chunk,
-                headers=headers,
-                timeout=UPLOAD_TIMEOUT,
-            )
-            if not response.ok:
-                raise OkFileError(
-                    f"Multipart upload failed at part {part_number} with HTTP {response.status_code}: {response.text}"
-                )
-            uploaded_by_number[part_number] = {
-                "partNumber": part_number,
-                "etag": normalize_etag(response.headers.get("ETag", "")),
-            }
-            print(f"Uploaded part {part_number}/{prepared['totalParts']} for {path.name}", file=sys.stderr)
+    worker_count = max(1, min(int(concurrency or DEFAULT_MULTIPART_CONCURRENCY), len(parts_to_upload)))
+    bytes_already_uploaded = sum(
+        min(part_size, max(path.stat().st_size - ((part_number - 1) * part_size), 0))
+        for part_number in uploaded_by_number
+    )
+    bytes_to_upload = sum(
+        min(part_size, max(path.stat().st_size - ((int(part["partNumber"]) - 1) * part_size), 0))
+        for part in parts_to_upload
+    )
+    tracker = ProgressTracker(
+        bytes_already_uploaded + bytes_to_upload,
+        total_parts=int(prepared.get("totalParts") or 0),
+        initial_bytes=bytes_already_uploaded,
+        initial_parts=len(uploaded_by_number),
+    )
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        future_to_part_number = {
+            executor.submit(upload_multipart_part, path, part, part_size, tracker=tracker): int(part["partNumber"])
+            for part in parts_to_upload
+        }
+        for future in as_completed(future_to_part_number):
+            uploaded = future.result()
+            part_number = int(uploaded["partNumber"])
+            uploaded_by_number[part_number] = uploaded
+            tracker.complete_part(part_number, file_name=path.name)
 
+    tracker.finish()
     return [uploaded_by_number[index] for index in sorted(uploaded_by_number)]
 
 
@@ -672,7 +777,6 @@ def print_upload_result(result: dict[str, Any], *, path: Path | None = None, ela
     print(f"URL: {result.get('url', '-')}")
     print(f"Download URL: {result.get('downloadUrl', '-')}")
     print(f"Preview URL: {result.get('playUrl', '-')}")
-    print(f"Burn after read: {'enabled' if result.get('burnAfterRead') else 'disabled'}")
 
 
 def print_site_result(
@@ -730,14 +834,25 @@ def normalize_etag(value: str) -> str:
     return str(value or "").strip().removeprefix("W/").strip('"')
 
 
-def iter_file(handle, total_size: int, chunk_size: int = 1024 * 1024):
+def iter_file(handle, total_size: int, chunk_size: int = 1024 * 1024, on_chunk=None):
     sent = 0
     while True:
         chunk = handle.read(chunk_size)
         if not chunk:
             break
         sent += len(chunk)
-        print_progress(sent, total_size)
+        if on_chunk is not None:
+            on_chunk(len(chunk))
+        else:
+            print_progress(min(total_size, sent), total_size)
+        yield chunk
+
+
+def iter_bytes(data: bytes, chunk_size: int = 1024 * 1024, on_chunk=None):
+    for offset in range(0, len(data), chunk_size):
+        chunk = data[offset : offset + chunk_size]
+        if on_chunk is not None:
+            on_chunk(len(chunk))
         yield chunk
 
 
@@ -778,6 +893,31 @@ def format_duration(seconds: float) -> str:
         return f"{int(minutes)}m {remaining:.1f}s"
     hours, minutes = divmod(minutes, 60)
     return f"{int(hours)}h {int(minutes)}m {remaining:.0f}s"
+
+
+def format_transfer_rate(bytes_per_second: float) -> str:
+    amount = max(float(bytes_per_second), 0.0)
+    units = ["B/s", "KB/s", "MB/s", "GB/s", "TB/s"]
+    unit = units[0]
+    for unit in units:
+        if amount < 1024 or unit == units[-1]:
+            break
+        amount /= 1024
+    precision = 1 if amount >= 10 else 2
+    return f"{amount:.{precision}f} {unit}"
+
+
+def format_eta(seconds: float) -> str:
+    remaining = max(float(seconds), 0.0)
+    if remaining < 1:
+        return "<1s"
+    if remaining < 60:
+        return f"{remaining:.0f}s"
+    minutes, seconds_left = divmod(remaining, 60)
+    if minutes < 60:
+        return f"{int(minutes)}m {int(seconds_left):02d}s"
+    hours, minutes_left = divmod(minutes, 60)
+    return f"{int(hours)}h {int(minutes_left):02d}m"
 
 
 def config_path() -> Path:

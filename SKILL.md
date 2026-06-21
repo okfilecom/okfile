@@ -1,7 +1,7 @@
 ---
 name: okfile
-description: "Uploads and publishes files or static site folders to OkFile, with direct links, preview URLs, and multipart support. Use when the user asks to upload, publish, or share files or folders."
-version: 1.2.3
+description: Upload and publish images, videos, PDFs, and common files to OkFile, or publish a static site folder to a per-site subdomain with directory listing fallback when root index.html is absent.
+version: 1.3.0
 license: Apache-2.0
 ---
 # OkFile Skill
@@ -60,6 +60,14 @@ curl -X POST "https://www.okfile.com/api/upload/prepare" \
   -H "Content-Type: application/json" \
   --data '{"filename":"photo.jpg","size":12345,"contentType":"image/jpeg","preferredPartSize":5242880}'
 ```
+### Authenticated Prepare Request
+For agent and automation use, send the API key in the `X-API-Key` header.
+```bash
+curl -X POST "https://www.okfile.com/api/upload/prepare" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: okf_..." \
+  --data '{"filename":"photo.jpg","size":12345,"contentType":"image/jpeg"}'
+```
 ### Minimal Quick Upload Request
 ```bash
 curl -X POST "https://www.okfile.com/api/upload/quick" \
@@ -78,6 +86,8 @@ curl "https://www.okfile.com/api/upload/status/a3k7m92x"
 ### Python CLI Examples
 ```bash
 okfile upload photo.jpg
+okfile upload video.mp4 --multipart-concurrency 3
+okfile upload archive.zip --multipart-concurrency 6 --max-downloads 10
 okfile upload photo.jpg --max-downloads 10
 okfile upload photo.jpg --expires-at 2026-12-31T23:59:59Z
 okfile publish ./my-site/
@@ -96,7 +106,7 @@ okfile --version
 ```
 If you need a pinned install for reproducibility:
 ```bash
-py -3 -m pip install okfile==1.2.3
+py -3 -m pip install okfile==1.3.0
 ```
 Upgrade an existing install:
 ```bash
@@ -104,7 +114,7 @@ py -3 -m pip install --upgrade okfile
 ```
 If you need a direct static artifact instead of PyPI, install the wheel from OkFile:
 ```bash
-py -3 -m pip install "https://www.okfile.com/downloads/okfile-1.2.3-py3-none-any.whl"
+py -3 -m pip install "https://www.okfile.com/downloads/okfile-1.3.0-py3-none-any.whl"
 ```
 Debugging tips:
 ```bash
@@ -114,8 +124,9 @@ okfile status invalid_id --verbose
 ### Key Rules
 - use `GET /api/upload/config` to discover the current quick-upload and multipart thresholds instead of hardcoding them
 - prefer `POST /api/upload/quick` for small files when `size <= quickUploadMaxSize`
-- `apiKey` is optional and is only sent to `prepare`
+- for authenticated `prepare` calls, send `X-API-Key`
 - `--max-downloads` and `--expires-at` are supported by the CLI for file uploads; `--expires-at` is also supported for site publish
+- `okfile upload` now supports `--multipart-concurrency`; the default is `3`
 - `okfile config --clear-origin` removes the stored default origin and falls back to `https://www.okfile.com`
 - `--verbose` prints traceback details for debugging request or parsing failures
 - `complete` only needs `id`
@@ -133,7 +144,7 @@ Flow:
 1. `POST /api/auth/request-link`
 2. open the email verification link
 3. create an API key in `/account`
-4. include `apiKey` in `POST /api/upload/prepare`
+4. send `X-API-Key` in `POST /api/upload/prepare`
 ## Endpoints
 ### `GET /api/upload/config`
 Response example:
@@ -156,15 +167,13 @@ Request body:
   "filename": "photo.jpg",
   "size": 12345,
   "contentType": "image/jpeg",
-  "preferredPartSize": 5242880,
-  "burnAfterRead": true,
-  "apiKey": "okf_..."
+  "preferredPartSize": 5242880
 }
 ```
 Notes:
 - `preferredPartSize` is optional
-- `burnAfterRead` is optional and invalidates the file after the first successful preview or download
 - current supported range is `5MB` to `100MB`
+- for authenticated calls, send `X-API-Key: okf_...`
 - response may be `single` or `multipart`
 - `expiresIn` refers to the signed `uploadUrl` or `parts[].uploadUrl` lifetime only; it does not describe a separate Worker-side upload-session TTL
 - if `complete` says the upload session was not found, first verify that you are using the exact same `id` returned by that specific `prepare` call
@@ -203,7 +212,7 @@ Multipart response example:
 Request:
 - send `multipart/form-data`
 - include the file in the `file` field
-- optional fields such as `expiresAt`, `maxDownloads`, and `burnAfterRead` follow the normal upload semantics
+- optional fields such as `expiresAt` and `maxDownloads` follow the normal upload semantics
 Success response example:
 ```json
 {
@@ -212,7 +221,6 @@ Success response example:
   "url": "https://www.okfile.com/i/a3k7m92x",
   "downloadUrl": "https://www.okfile.com/d/a3k7m92x",
   "playUrl": "https://www.okfile.com/i/a3k7m92x?play=1",
-  "burnAfterRead": true,
   "type": "image"
 }
 ```
@@ -345,7 +353,7 @@ py -3 -m pip install okfile
 
 Pinned install example:
 ```bash
-py -3 -m pip install okfile==1.2.3
+py -3 -m pip install okfile==1.3.0
 ```
 
 Use the CLI when:
@@ -384,5 +392,5 @@ Use the CLI when:
 - account: `https://www.okfile.com/account`
 - admin: `https://www.okfile.com/admin`
 - PyPI package: `https://pypi.org/project/okfile/`
-- CLI wheel: `https://www.okfile.com/downloads/okfile-1.2.3-py3-none-any.whl`
+- CLI wheel: `https://www.okfile.com/downloads/okfile-1.3.0-py3-none-any.whl`
 - repo CLI entry: `okfile_cli/__main__.py`

@@ -33,7 +33,7 @@ Use this skill to upload and publish files or static sites through OkFile.
 - the user wants multipart upload for a large file
 - multipart completion fails and missing parts need targeted retry
 ## Follow This Workflow
-1. Call `POST /api/upload/prepare` with `filename`, `size`, `contentType`, and optional `preferredPartSize` and `apiKey`.
+1. Call `POST /api/upload/prepare` with `filename`, `size`, `contentType`, and optional `preferredPartSize`, and send `X-API-Key` when authenticated access is needed.
 2. Upload the file body with `PUT` to `uploadUrl`, or upload each chunk to `parts[].uploadUrl`.
 3. Call `POST /api/upload/complete` with only `id`.
 4. If needed, call `GET /api/upload/status/{id}` to inspect progress.
@@ -46,8 +46,11 @@ Use this skill to upload and publish files or static sites through OkFile.
 5. If root `index.html` is absent, explain that OkFile will show a directory listing instead of forcing an arbitrary file as homepage.
 6. Do not generate or upload a synthetic `index.html` just to list files; upload the real folder tree and let OkFile render the listing.
 ## Apply These Rules
-- Send `apiKey` only in `prepare`.
+- Send API keys in the `X-API-Key` header.
 - Send only `id` in `complete`.
+- `expiresIn` refers only to the signed `uploadUrl` or `parts[].uploadUrl` lifetime; it does not define a separate Worker-side upload-session TTL.
+- Keep the exact `id` from the matching `prepare` response until `complete` finishes.
+- For site publishing, keep the exact `siteId` and `siteToken` returned by the matching `site/prepare` response and pass them to the matching `site/complete`.
 - Prefer `url` for direct consumption.
 - Include `playUrl` when preview matters.
 - Prefer `siteUrl` for the root of a published site.

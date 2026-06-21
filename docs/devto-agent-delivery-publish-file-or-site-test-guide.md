@@ -33,7 +33,7 @@ If these pass, the delivery layer is safe to be called by an Agent in an automat
 - `fileName`
 - `contentType`
 - `size` (I always include it)
-- optional `apiKey` (for authenticated usage)
+- optional `X-API-Key` header (for authenticated usage)
 
 ### Steps
 
@@ -48,12 +48,14 @@ If these pass, the delivery layer is safe to be called by an Agent in an automat
 async function publishFile(file, apiKey) {
   const prepareRes = await fetch("https://www.okfile.com/api/upload/prepare", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      "X-API-Key": apiKey
+    },
     body: JSON.stringify({
       fileName: file.name,
       contentType: file.type || "application/octet-stream",
-      size: file.size,
-      apiKey
+      size: file.size
     })
   });
 
@@ -126,14 +128,16 @@ I test a folder publish flow with two samples:
 async function publishSite(files, apiKey) {
   const prepare = await fetch("https://www.okfile.com/api/site/prepare", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      "X-API-Key": apiKey
+    },
     body: JSON.stringify({
       files: files.map((f) => ({
         path: f.relativePath,
         size: f.size,
         contentType: f.contentType
-      })),
-      apiKey
+      }))
     })
   }).then((r) => r.json());
 

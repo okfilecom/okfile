@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "okfile"
-version = "1.2.2"
+version = "1.3.0"
 description = "Python CLI for uploading files and publishing static sites to OkFile"
 readme = "README.md"
 requires-python = ">=3.10"

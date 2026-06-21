@@ -64,12 +64,14 @@
 async function publishFile(file, apiKey) {
   const prepareRes = await fetch('https://www.okfile.com/api/upload/prepare', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      'X-API-Key': apiKey
+    },
     body: JSON.stringify({
       fileName: file.name,
       contentType: file.type || 'application/octet-stream',
-      size: file.size,
-      apiKey
+      size: file.size
     })
   });
 
@@ -156,14 +158,16 @@ async function publishFile(file, apiKey) {
 async function publishSite(files, apiKey) {
   const prepare = await fetch('https://www.okfile.com/api/site/prepare', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      'X-API-Key': apiKey
+    },
     body: JSON.stringify({
       files: files.map((item) => ({
         path: item.relativePath,
         size: item.size,
         contentType: item.contentType
-      })),
-      apiKey
+      }))
     })
   }).then((r) => r.json());
 

@@ -20,12 +20,13 @@ const DEFAULT_API_KEY_WINDOW_SEC = 3600;
 const DEFAULT_API_KEY_UPLOAD_LIMIT = 1000;
 const STATIC_PAGE_BROWSER_TTL = 300;
 const STATIC_PAGE_EDGE_TTL = 3600;
-const STATIC_PAGE_CACHE_VERSION = 'v31';
+const STATIC_PAGE_CACHE_VERSION = 'v33';
 const UPLOAD_NOTIFY_TO_EMAIL = 'sungz@163.com';
 const UPLOAD_NOTIFY_DAILY_LIMIT = 10;
 const UPLOAD_NOTIFY_SUBJECT_PREFIX = 'OkFile New Upload';
 const EXPIRED_CLEANUP_BATCH_LIMIT = 200;
 const ADMIN_PANEL_ORIGIN = 'https://admin.okfile.com';
+const AUTH_PUBLIC_ORIGIN = 'https://www.okfile.com';
 const PUBLISH_DOMAIN_SETTING_KEY = 'publish_origin';
 const META_PREFIX = '__meta__/';
 const SESSION_PREFIX = '__upload_sessions__/';
@@ -572,13 +573,34 @@ function roundUpTo(value, step) {
 }
 
 function buildUploadPolicy(actor) {
-  const level = normalizeVipLevel(actor?.vipLevel ?? actor?.vip_level);
+  const isAnonymous = !actor;
+  const isApiKey = Boolean(actor?.key_prefix || actor?.id?.startsWith('key_'));
+  const isSession = Boolean(actor?.sessionId || actor?.userId);
+
+  // Determine VIP level
+  let level = 0;
+  if (isApiKey) {
+    level = 4;
+  } else if (isSession) {
+    level = normalizeVipLevel(actor?.vipLevel ?? actor?.vip_level);
+  }
+
   const maxFileSize = maxFileSizeForVipLevel(level);
+  
+  // Expiration info
+  const expirationNote = isAnonymous 
+    ? 'Anonymous uploads are temporary and will be deleted after 24 hours.' 
+    : 'Authenticated uploads follow your account retention policy.';
+
   return {
     vipLevel: level,
-    vipLabel: vipLabel(level),
+    vipLabel: isAnonymous ? 'Anonymous' : (isApiKey ? 'API Key' : vipLabel(level)),
+    isAnonymous,
+    isApiKey,
     maxFileSize,
     maxFileSizeLabel: formatSize(maxFileSize),
+    expirationNote,
+    recommendation: isAnonymous ? 'Use an API Key or Sign In to support up to 1TB files and permanent storage.' : null,
     multipart: {
       threshold: MULTIPART_THRESHOLD,
       defaultPartSize: PART_SIZE,
@@ -2698,7 +2720,7 @@ async function sendMagicLink(email, request, env, nextPath = '') {
     'INSERT INTO magic_links (id, user_id, token_hash, expires_at, created_at) VALUES (?, ?, ?, ?, ?)'
   ).bind(`ml_${generateId(16)}`, user.id, tokenHash, expiresAt, now.toISOString()).run();
 
-  const verifyUrl = `${new URL(request.url).origin}/auth/verify?token=${encodeURIComponent(rawToken)}${nextPath ? `&next=${encodeURIComponent(nextPath)}` : ''}`;
+  const verifyUrl = `${AUTH_PUBLIC_ORIGIN}/auth/verify?token=${encodeURIComponent(rawToken)}${nextPath ? `&next=${encodeURIComponent(nextPath)}` : ''}`;
   const payload = {
     from: env.RESEND_FROM_EMAIL,
     to: [normalizeEmail(email)],
@@ -4681,8 +4703,8 @@ async function finalizeUploadedFile(request, env, options) {
   });
 }
 
-function getRequestApiKey(request, body) {
-  return String(request.headers.get('x-api-key') || body?.apiKey || '').trim();
+function getRequestApiKey(request) {
+  return String(request.headers.get('x-api-key') || '').trim();
 }
 
 async function handleAuthRequestLink(request, env) {
@@ -4947,6 +4969,7 @@ async function handleUploadConfig(request, env) {
   let actor = null;
   if (rawApiKey) {
     actor = await getApiKeyByRaw(rawApiKey, env);
+    if (!actor) return json({ error: 'Invalid API key' }, 401);
   } else {
     actor = await getSessionFromRequest(request, env);
   }
@@ -4995,7 +5018,7 @@ async function handleSitePrepare(request, env) {
     return json({ error: `Request body must be valid JSON: ${error.message}` }, 400);
   }
 
-  const rawApiKey = getRequestApiKey(request, body);
+  const rawApiKey = getRequestApiKey(request);
   let apiKey = null;
   let session = null;
   if (rawApiKey) {
@@ -5041,7 +5064,12 @@ async function handleSitePrepare(request, env) {
       return json({ error: `Invalid file size: ${relativePath}` }, 400);
     }
     if (size > uploadPolicy.maxFileSize) {
-      return json({ error: `File is too large: ${relativePath}. Maximum file size for ${uploadPolicy.vipLabel} is ${uploadPolicy.maxFileSizeLabel}` }, 400);
+      const errorMsg = `File is too large: ${relativePath} (${formatSize(size)}). Maximum supported size for ${uploadPolicy.vipLabel} is ${uploadPolicy.maxFileSizeLabel}.`;
+      const hint = uploadPolicy.recommendation ? ` ${uploadPolicy.recommendation}` : '';
+      return json({ 
+        error: errorMsg + hint,
+        policy: uploadPolicy
+      }, 400);
     }
     totalSize += size;
     rawPaths.push(relativePath);
@@ -5169,7 +5197,7 @@ async function handleUploadPrepare(request, env) {
     return json({ error: `Request body must be valid JSON: ${error.message}` }, 400);
   }
 
-  const rawApiKey = getRequestApiKey(request, body);
+  const rawApiKey = getRequestApiKey(request);
   let apiKey = null;
   let session = null;
   if (rawApiKey) {
@@ -5213,7 +5241,12 @@ async function handleUploadPrepare(request, env) {
   const detectedType = contentTypeFromName(filename, body?.contentType);
   if (!size || size < 1) return json({ error: 'File is empty' }, 400);
   if (size > uploadPolicy.maxFileSize) {
-    return json({ error: `File is too large. Maximum supported size for ${uploadPolicy.vipLabel} is ${uploadPolicy.maxFileSizeLabel}` }, 400);
+    const errorMsg = `File is too large: ${formatSize(size)}. Maximum supported size for ${uploadPolicy.vipLabel} is ${uploadPolicy.maxFileSizeLabel}.`;
+    const hint = uploadPolicy.recommendation ? ` ${uploadPolicy.recommendation}` : '';
+    return json({ 
+      error: errorMsg + hint,
+      policy: uploadPolicy
+    }, 400);
   }
   const actualPartSize = resolveMultipartPartSize(size, preferredPartSize);
 
@@ -5246,6 +5279,7 @@ async function handleUploadPrepare(request, env) {
     burnAfterRead: Boolean(burnAfterRead),
     maxDownloads,
     expiresAt: effectiveExpiresAt,
+    policy: uploadPolicy,
     limits: buildPrepareLimits(apiKey, actualPartSize, maxDownloads, Boolean(burnAfterRead), uploadPolicy),
     integrity: {
       etag: {
@@ -5360,10 +5394,7 @@ async function handleUploadQuick(request, env) {
     }, 400);
   }
 
-  const body = {
-    apiKey: String(form.get('apiKey') || '').trim()
-  };
-  const rawApiKey = getRequestApiKey(request, body);
+  const rawApiKey = getRequestApiKey(request);
   let apiKey = null;
   let session = null;
   if (rawApiKey) {
@@ -5964,7 +5995,10 @@ export default {
       return handleDeleteAccountSite(request, accountSiteMatch[1], env);
     }
 
-    if (url.pathname === '/api/upload/config' && request.method === 'GET') return handleUploadConfig(request, env);
+    if (url.pathname === '/api/upload/config') {
+      if (request.method === 'GET') return handleUploadConfig(request, env);
+      return methodNotAllowed(request, ['GET']);
+    }
     if (url.pathname === '/api/site/prepare' && request.method === 'POST') return handleSitePrepare(request, env);
     if (url.pathname === '/api/site/complete' && request.method === 'POST') return handleSiteComplete(request, env);
     if (url.pathname === '/api/upload/prepare' && request.method === 'POST') return handleUploadPrepare(request, env);
@@ -6007,12 +6041,6 @@ export default {
     if (accountKeyMatch) return methodNotAllowed(request, ['PATCH', 'DELETE']);
     if (accountFileMatch) return methodNotAllowed(request, ['DELETE']);
     if (accountSiteMatch) return methodNotAllowed(request, ['DELETE']);
-    if (url.pathname === '/api/upload/config') return methodNotAllowed(request, ['GET']);
-    if (url.pathname === '/api/site/prepare') return methodNotAllowed(request, ['POST']);
-    if (url.pathname === '/api/site/complete') return methodNotAllowed(request, ['POST']);
-    if (url.pathname === '/api/upload/prepare') return methodNotAllowed(request, ['POST']);
-    if (url.pathname === '/api/upload/quick') return methodNotAllowed(request, ['POST']);
-    if (url.pathname === '/api/upload/complete') return methodNotAllowed(request, ['POST']);
     if (url.pathname === '/api/upload/status/') return json({ error: 'Missing upload ID' }, 404);
     if (statusMatch) return methodNotAllowed(request, ['GET']);
     if (url.pathname.startsWith('/api/')) return json({ error: 'API endpoint not found' }, 404);

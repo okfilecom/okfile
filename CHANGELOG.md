@@ -2,42 +2,23 @@
 
 All notable changes to this repository are documented in this file.
 
-## [Unreleased]
+## [1.3.0] - 2026-06-21
+
+### Breaking
+
+- authenticated upload and site prepare requests now accept API keys only via the `X-API-Key` header; JSON body and form field `apiKey` support has been removed
 
 ### Added
 
-- homepage copy and API examples now document burn-after-read one-time links more clearly
-- README now explains that `burnAfterRead=true` applies to direct links, preview pages, and download routes
-
-### Fixed
-
-- burn-after-read preview pages at `/i/{id}?play=1` now expire after the first successful open instead of remaining reusable
-- burn-after-read direct links and preview media responses now use `no-store` caching headers to avoid browser replay from cache
-
-## [1.2.3] - 2026-06-17
-
-### Fixed
-
-- PyPI package long-description examples are refreshed to consistently reference `okfile==1.2.3` and `okfile-1.2.3-py3-none-any.whl`
-- root skill docs and Trae skill docs now match the current published CLI install examples
-
-### Added
-
-- npm launcher package `@okfilecom/okfile@1.2.3`, which bootstraps the published Python CLI for `npx` workflows
-
-- article draft comparing `okfile` skill and CLI usage with a small real-world upload and site publish benchmark
-
-## [1.2.2] - 2026-06-16
-
-### Fixed
-
-- CLI single-file signed uploads now send `bytes` bodies instead of file-handle streams, avoiding hangs during large-file presigned `PUT` requests in the current Windows `requests` environment
-- CLI site publish now progresses past the first large file in the same environment instead of stalling during the first signed upload
+- CLI `upload` now supports multipart part concurrency with `--multipart-concurrency`, defaulting to `3`
+- README and skill docs now include multipart CLI examples and `--help` examples
 
 ### Updated
 
-- pinned CLI install examples now reference `okfile==1.2.2`
-- direct wheel download filename now references `okfile-1.2.2-py3-none-any.whl`
+- Python package metadata now aligns on version `1.3.0`
+- pinned CLI install examples and wheel download examples now reference `okfile 1.3.0`
+- README, skill docs, and agent-facing guides now document `X-API-Key` as the only supported authentication input for upload and site prepare flows
+- Python CLI now sends API keys only through the `X-API-Key` header for upload and site prepare requests
 
 ## [1.2.1] - 2026-06-08
 

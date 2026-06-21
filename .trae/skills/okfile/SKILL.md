@@ -45,6 +45,13 @@ curl -X POST "https://www.okfile.com/api/upload/prepare" \
 ```
 
 ```bash
+curl -X POST "https://www.okfile.com/api/upload/prepare" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: okf_..." \
+  --data '{"filename":"photo.jpg","size":12345,"contentType":"image/jpeg"}'
+```
+
+```bash
 curl -X POST "https://www.okfile.com/api/upload/complete" \
   -H "Content-Type: application/json" \
   --data '{"id":"a3k7m92x"}'
@@ -62,13 +69,13 @@ okfile --version
 Pinned install example:
 
 ```bash
-py -3 -m pip install okfile==1.2.3
+py -3 -m pip install okfile==1.3.0
 ```
 
 Fallback wheel install:
 
 ```bash
-py -3 -m pip install "https://www.okfile.com/downloads/okfile-1.2.3-py3-none-any.whl"
+py -3 -m pip install "https://www.okfile.com/downloads/okfile-1.3.0-py3-none-any.whl"
 ```
 
 Common commands:
@@ -95,7 +102,7 @@ okfile upload photo.jpg --origin https://www.okfile.com --verbose
 
 - Discover limits from `GET /api/upload/config` instead of hardcoding them.
 - Prefer `POST /api/upload/quick` for files within the advertised quick-upload size.
-- When using an API key, send `X-API-Key` on API calls and include `apiKey` only in `prepare` payloads when required.
+- For authenticated `prepare` calls, send `X-API-Key`.
 - The CLI supports `--max-downloads` and `--expires-at`; `--verbose` shows traceback details for debugging.
 - `okfile config --clear-origin` removes the stored default origin and falls back to `https://www.okfile.com`.
 - Send only `id` to `complete`.
@@ -118,6 +125,6 @@ okfile upload photo.jpg --origin https://www.okfile.com --verbose
 - Account: `https://www.okfile.com/account`
 - Admin: `https://www.okfile.com/admin`
 - PyPI package: `https://pypi.org/project/okfile/`
-- CLI wheel: `https://www.okfile.com/downloads/okfile-1.2.3-py3-none-any.whl`
+- CLI wheel: `https://www.okfile.com/downloads/okfile-1.3.0-py3-none-any.whl`
 - Repo CLI entry: `okfile_cli/__main__.py`
 - Repo doc: `/SKILL.md`

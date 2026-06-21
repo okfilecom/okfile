@@ -229,14 +229,14 @@ Request:
   "files": [
     { "path": "index.html", "size": 1200, "contentType": "text/html" },
     { "path": "assets/app.js", "size": 48000, "contentType": "application/javascript" }
-  ],
-  "apiKey": "okf_xxx"
+  ]
 }
 ```
 
 Notes:
 
 - `entryPath` may be empty when the folder has no root `index.html`
+- send API keys in the `X-API-Key` header when the request is authenticated
 - if every uploaded path is under the same top-level directory, the backend strips that directory before persisting the site
 - if `siteId` is omitted, OkFile creates a new site
 - if `siteId` is provided, OkFile treats the request as an update of an existing site and creates the next release for that site
