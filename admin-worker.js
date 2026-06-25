@@ -13,15 +13,6 @@ const SESSION_COOKIE = 'okfile_session';
 const R2_STANDARD_STORAGE_PRICE_PER_GB_MONTH = 0.015;
 const R2_STANDARD_STORAGE_FREE_GB = 10;
 const R2_LIST_PAGE_LIMIT = 1000;
-const VIP_FILE_SIZE_LIMITS = {
-  0: 500 * 1024 * 1024,
-  1: 5 * 1024 * 1024 * 1024,
-  2: 50 * 1024 * 1024 * 1024,
-  3: 500 * 1024 * 1024 * 1024,
-  4: 1024 * 1024 * 1024 * 1024
-};
-
-let vipLevelSchemaEnsured = false;
 
 function json(data, status = 200, extraHeaders = {}) {
   return new Response(JSON.stringify(data), {
@@ -99,14 +90,9 @@ function svgResponse(svg, status = 200, extraHeaders = {}) {
 }
 
 const FAVICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <defs>
-    <linearGradient id="okfileLogoGradient" x1="8" y1="8" x2="56" y2="56" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#f48120"/>
-      <stop offset="1" stop-color="#ffb347"/>
-    </linearGradient>
-  </defs>
-  <rect width="64" height="64" rx="18" fill="url(#okfileLogoGradient)"/>
-  <text x="32" y="42" text-anchor="middle" font-size="30" font-family="Inter, Arial, sans-serif" font-weight="800" fill="#ffffff">O</text>
+  <rect width="64" height="64" rx="14" fill="#0a0a0a"/>
+  <path d="M18 18h11c10.5 0 17 5.3 17 14s-6.5 14-17 14H18V18zm10.4 21.2c5.9 0 9.6-2.6 9.6-7.2s-3.7-7.2-9.6-7.2H26v14.4h2.4z" fill="#2563eb"/>
+  <path d="M48 20 35 46h-8l13-26h8z" fill="#60a5fa"/>
 </svg>`;
 
 function escapeHtml(value = '') {
@@ -120,35 +106,10 @@ function escapeHtml(value = '') {
 
 function formatSize(size) {
   if (!Number.isFinite(size) || size < 0) return 'Unknown';
-  if (size >= 1024 * 1024 * 1024 * 1024) return `${(size / 1024 / 1024 / 1024 / 1024).toFixed(2)} TB`;
   if (size >= 1024 * 1024 * 1024) return `${(size / 1024 / 1024 / 1024).toFixed(2)} GB`;
   if (size >= 1024 * 1024) return `${(size / 1024 / 1024).toFixed(1)} MB`;
   if (size >= 1024) return `${(size / 1024).toFixed(0)} KB`;
   return `${size} B`;
-}
-
-function normalizeVipLevel(value) {
-  const level = Number(value);
-  if (!Number.isInteger(level)) return 0;
-  return Math.max(0, Math.min(level, 4));
-}
-
-function vipLabel(level) {
-  const normalized = normalizeVipLevel(level);
-  return normalized > 0 ? `VIP-${normalized}` : 'Standard';
-}
-
-function maxFileSizeForVipLevel(level) {
-  const normalized = normalizeVipLevel(level);
-  return VIP_FILE_SIZE_LIMITS[normalized] || VIP_FILE_SIZE_LIMITS[0];
-}
-
-async function ensureVipLevelColumn(env) {
-  if (vipLevelSchemaEnsured) return;
-  try {
-    await env.DB.prepare('ALTER TABLE users ADD COLUMN vip_level INTEGER NOT NULL DEFAULT 0').run();
-  } catch {}
-  vipLevelSchemaEnsured = true;
 }
 
 function toGb(size) {
@@ -1151,12 +1112,10 @@ async function auditUntrackedBucketObjects(env, options = {}) {
 }
 
 async function getUserByEmail(email, env) {
-  await ensureVipLevelColumn(env);
   return env.DB.prepare('SELECT * FROM users WHERE email = ?').bind(normalizeEmail(email)).first();
 }
 
 async function getUserById(id, env) {
-  await ensureVipLevelColumn(env);
   return env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(id).first();
 }
 
@@ -1246,7 +1205,6 @@ async function createSession(userId, env) {
 }
 
 async function getSessionFromRequest(request, env) {
-  await ensureVipLevelColumn(env);
   const token = parseCookies(request)[SESSION_COOKIE];
   if (!token) return null;
   const sessionHash = await sha256Hex(token);
@@ -1263,7 +1221,6 @@ async function getSessionFromRequest(request, env) {
     sessionId: record.session_id,
     userId: record.id,
     email: record.email,
-    vipLevel: normalizeVipLevel(record.vip_level),
     isAdmin: adminEmailSet(env).has(normalizeEmail(record.email))
   };
 }
@@ -1397,6 +1354,7 @@ td input,td select{width:100%;padding:8px 10px;border-radius:8px;border:1px soli
 .status-pill{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;font-size:12px;font-weight:600;border:1px solid transparent}
 .status-pill.active{background:#ecfdf3;color:#166534;border-color:#bbf7d0}
 .status-pill.disabled{background:#f8fafc;color:#475569;border-color:#e2e8f0}
+.status-pill.expired{background:#fff1f2;color:#b91c1c;border-color:#fecdd3}
 .cell-stack{display:grid;gap:6px}
 .token-name{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .token-name strong{font-size:14px;color:#0f172a}
@@ -1599,6 +1557,11 @@ function adminContentForPage(page, pageContext = {}) {
             <option value="published" selected>Published Files</option>
             <option value="user-facing">User-Facing R2 Objects</option>
           </select>
+          <select id="fileExpiredFilter">
+            <option value="all" selected>All expirations</option>
+            <option value="active">Active only</option>
+            <option value="expired">Expired only</option>
+          </select>
           <input id="fileQuery" type="text" placeholder="Search file name, file ID, owner email, or API Key name">
           <select id="fileSort">
             <option value="created_desc" selected>Newest first</option>
@@ -1683,12 +1646,12 @@ function adminContentForPage(page, pageContext = {}) {
       <div class="inline-row" style="margin-top:14px">
         <label class="muted" for="untrackedSampleLimit">Sample size</label>
         <input id="untrackedSampleLimit" type="number" min="1" max="100" value="20" style="width:120px">
-        <label class="muted" for="staleUploadHours">Stale upload hours</label>
+        <label class="muted" for="staleUploadHours">Incomplete upload hours</label>
         <input id="staleUploadHours" type="number" min="1" max="720" value="${STALE_UPLOAD_SESSION_TTL_HOURS}" style="width:120px">
-        <button class="btn-secondary" id="auditUntrackedBtn" type="button">Audit Untracked Objects</button>
-        <button class="btn-primary" id="cleanupUntrackedBtn" type="button">Clean Untracked Objects</button>
+        <button class="btn-secondary" id="auditUntrackedBtn" type="button">Audit Incomplete Uploads</button>
+        <button class="btn-primary" id="cleanupUntrackedBtn" type="button">Clean Incomplete Uploads</button>
       </div>
-      <div class="note" id="untrackedCleanupResult">No untracked-object audit run yet.</div>
+      <div class="note" id="untrackedCleanupResult">No incomplete-upload cleanup run yet.</div>
       <div class="inline-row" style="margin-top:14px">
         <label class="muted" for="sizeBackfillLimit">Backfill batch</label>
         <input id="sizeBackfillLimit" type="number" min="1" max="500" value="100" style="width:120px">
@@ -1834,7 +1797,7 @@ const logoutBtn=$('logoutBtn');
 const topAccountChip=$('topAccountChip');
 const sidebarWorkspaceLabel=$('sidebarWorkspaceLabel');
 const siteState={page:1,pageSize:20,q:'',status:'all',selectedSiteId:'',detailPage:1,detailPageSize:20,detailQ:''};
-const fileState={page:1,pageSize:20,q:'',scope:'published',sort:'created_desc'};
+const fileState={page:1,pageSize:20,q:'',scope:'published',sort:'created_desc',expired:'all'};
 function esc(value){
   return String(value == null ? '' : value)
     .replace(/&/g,'&amp;')
@@ -1900,7 +1863,6 @@ function displayOrigin(value){
 }
 function formatSize(size){
   if(!Number.isFinite(size) || size < 0) return 'Unknown';
-  if(size >= 1024 * 1024 * 1024 * 1024) return (size / 1024 / 1024 / 1024 / 1024).toFixed(2) + ' TB';
   if(size >= 1024 * 1024 * 1024) return (size / 1024 / 1024 / 1024).toFixed(2) + ' GB';
   if(size >= 1024 * 1024) return (size / 1024 / 1024).toFixed(1) + ' MB';
   if(size >= 1024) return Math.round(size / 1024) + ' KB';
@@ -1938,6 +1900,12 @@ function normalizeFileSortValue(value){
   return value === 'size_desc' || value === 'size_asc' || value === 'created_desc'
     ? value
     : 'created_desc';
+}
+function normalizeFileExpiredFilterValue(value){
+  return value === 'active' || value === 'expired' ? value : 'all';
+}
+function fileExpiredState(item){
+  return item.expiresAt && new Date(item.expiresAt).getTime() <= Date.now() ? 'expired' : 'active';
 }
 function userHref(userId){
   return '/users/' + encodeURIComponent(String(userId || ''));
@@ -2072,7 +2040,6 @@ function userRow(item){
   return '<tr>' +
     '<td>' + renderUserCell(item.email, item.id) + '</td>' +
     '<td><div class="cell-stack"><div>' + esc(formatTime(item.createdAt)) + '</div><div class="subtle">Registered account</div></div></td>' +
-    '<td><div class="cell-stack"><strong>' + esc(item.vipLabel || 'Standard') + '</strong><div class="subtle">' + esc(formatSize(Number(item.maxFileSize || 0))) + ' per file</div></div></td>' +
     '<td>' + esc(formatNumber(item.apiKeyCount)) + '<div class="subtle">active ' + esc(formatNumber(item.activeApiKeyCount)) + '</div></td>' +
     '<td>' + esc(formatNumber(item.uploadedCountTotal)) + '</td>' +
     '<td><div class="cell-stack"><strong>' + esc(formatSize(totalStorageBytes)) + '</strong><div class="subtle">files ' + esc(formatSize(Number(item.fileBytes || 0))) + ' + sites ' + esc(formatSize(Number(item.siteBytes || 0))) + '</div></div></td>' +
@@ -2084,8 +2051,8 @@ async function loadUsersTable(){
   const data = await api('/api/admin/users');
   if(!$('usersTableWrap')) return data.users || [];
   const items = data.users || [];
-  $('usersTableWrap').innerHTML = '<table><thead><tr><th>User</th><th>Registered</th><th>VIP</th><th>API Keys</th><th>Total Uploads</th><th>Storage</th><th>Sites</th></tr></thead><tbody>' +
-    (items.length ? items.map(userRow).join('') : '<tr><td colspan="7" class="muted">No users were found.</td></tr>') +
+  $('usersTableWrap').innerHTML = '<table><thead><tr><th>User</th><th>Registered</th><th>API Keys</th><th>Total Uploads</th><th>Storage</th><th>Sites</th></tr></thead><tbody>' +
+    (items.length ? items.map(userRow).join('') : '<tr><td colspan="6" class="muted">No users were found.</td></tr>') +
     '</tbody></table>';
   return items;
 }
@@ -2265,12 +2232,15 @@ function fileRow(item){
   const fileLink = item.viewUrl
     ? '<a href="' + esc(item.viewUrl) + '" target="_blank" rel="noopener"><strong>' + esc(item.fileName || item.id) + '</strong></a>'
     : '<strong>' + esc(item.fileName || item.id) + '</strong>';
+  const expiredState = fileExpiredState(item);
+  const expiresLabel = item.expiresAt ? formatTime(item.expiresAt) : 'Never';
   return '<tr>' +
     '<td><div class="cell-stack">' + fileLink + '<div class="subtle mono">' + esc(idLine) + '</div></div></td>' +
     '<td>' + esc(item.contentType || '-') + '</td>' +
     '<td>' + esc(formatSize(Number(item.size || 0))) + '</td>' +
     '<td>' + renderUserCell(ownerLabel, item.userId, ownerDetail) + '</td>' +
     '<td><div class="cell-stack"><div>' + formatTime(item.createdAt) + '</div>' + (detailLine ? '<div class="muted">' + esc(detailLine) + '</div>' : '') + '<div class="muted">' + esc(extraLine) + '</div></div></td>' +
+    '<td><div class="cell-stack"><div' + (expiredState === 'expired' ? ' style="color:#b91c1c;font-weight:600"' : '') + '>' + esc(expiresLabel) + '</div><div><span class="status-pill ' + expiredState + '">' + esc(expiredState === 'expired' ? 'Expired' : 'Active') + '</span></div></div></td>' +
     '<td>' + renderFileActions(item) + '</td>' +
   '</tr>';
 }
@@ -2579,17 +2549,19 @@ async function loadFilesTable(){
   const data = await api('/api/admin/files' + buildQuery({
     q: fileState.q,
     scope: fileState.scope,
+    expired: fileState.expired,
     sort: fileState.sort,
     page: fileState.page,
     pageSize: fileState.pageSize
   }));
   if($('fileScope')) $('fileScope').value = data.meta?.scope || fileState.scope;
+  if($('fileExpiredFilter')) $('fileExpiredFilter').value = data.meta?.expired || fileState.expired;
   if($('fileSort')) $('fileSort').value = data.meta?.sort || fileState.sort;
   if(!data.files || !data.files.length){
     $('fileTableWrap').innerHTML = '<div class="muted">' + (fileState.scope === 'user-facing' ? 'No matching user-facing objects were found.' : 'No matching files were found.') + '</div>';
     return data;
   }
-  $('fileTableWrap').innerHTML = '<table><thead><tr><th>' + (fileState.scope === 'user-facing' ? 'Object' : 'File') + '</th><th>Type</th><th>Size</th><th>Owner</th><th>Time / Origin</th><th>Actions</th></tr></thead><tbody>' + data.files.map(fileRow).join('') + '</tbody></table>' + renderFilesPager(data.meta);
+  $('fileTableWrap').innerHTML = '<table><thead><tr><th>' + (fileState.scope === 'user-facing' ? 'Object' : 'File') + '</th><th>Type</th><th>Size</th><th>Owner</th><th>Time / Origin</th><th>Expires / Status</th><th>Actions</th></tr></thead><tbody>' + data.files.map(fileRow).join('') + '</tbody></table>' + renderFilesPager(data.meta);
   if($('filePrevPage')) $('filePrevPage').onclick = async () => {
     if(data.meta.page <= 1) return;
     fileState.page = data.meta.page - 1;
@@ -2646,63 +2618,17 @@ async function loadUserDetailPage(){
     '<div class="site-detail"><h3>Account</h3><div class="site-detail-grid">' +
       metricCard('Email', user.email || '-', '') +
       metricCard('User ID', user.id || '-', '') +
-      metricCard('VIP Level', user.vipLabel || 'Standard', 'Current single-file upload tier') +
-      metricCard('Single File Limit', formatSize(Number(user.maxFileSize || 0)), 'Applies to direct uploads and prepare requests') +
       metricCard('Registered', formatTime(user.createdAt), 'Account creation time') +
       metricCard('Verified', formatTime(user.verifiedAt), 'First verified sign-in') +
       metricCard('Last Login', formatTime(user.lastLoginAt), 'Latest recorded session activity') +
       metricCard('Stored Files', formatNumber(summary.fileCount || 0), formatSize(Number(summary.fileBytes || 0))) +
       metricCard('Published Sites', formatNumber(summary.siteCount || 0), formatSize(Number(summary.siteBytes || 0))) +
       metricCard('Combined Storage', formatSize(totalStorageBytes), 'Files plus sites for this account') +
-    '</div>' +
-    '<div class="field"><label for="userVipLevel">VIP Level</label><select id="userVipLevel">' +
-      '<option value="0"' + (Number(user.vipLevel || 0) === 0 ? ' selected' : '') + '>Standard</option>' +
-      '<option value="1"' + (Number(user.vipLevel || 0) === 1 ? ' selected' : '') + '>VIP-1</option>' +
-      '<option value="2"' + (Number(user.vipLevel || 0) === 2 ? ' selected' : '') + '>VIP-2</option>' +
-      '<option value="3"' + (Number(user.vipLevel || 0) === 3 ? ' selected' : '') + '>VIP-3</option>' +
-      '<option value="4"' + (Number(user.vipLevel || 0) === 4 ? ' selected' : '') + '>VIP-4</option>' +
-    '</select></div>' +
-    '<div class="action-row"><button class="btn-primary" type="button" id="saveVipBtn">Save VIP Level</button><div class="note" id="userVipHint">Current limit: ' + esc(formatSize(Number(user.maxFileSize || 0))) + ' per file.</div></div>' +
     '</div></div>' +
     '<div class="site-detail"><h3>API Keys</h3><div class="table-wrap"><table><thead><tr><th>Key</th><th>Status</th><th>Created</th><th>Uploaded</th></tr></thead><tbody>' + (keyRows || '<tr><td colspan="4" class="muted">No API Keys were found for this user.</td></tr>') + '</tbody></table></div></div>' +
     '<div class="site-detail"><h3>Files</h3><div class="table-wrap"><table><thead><tr><th>File</th><th>Type</th><th>Size</th><th>Created / Source</th><th>Actions</th></tr></thead><tbody>' + (fileRows || '<tr><td colspan="5" class="muted">No uploaded files were found for this user.</td></tr>') + '</tbody></table></div></div>' +
     '<div class="site-detail"><h3>Sites</h3><div class="table-wrap"><table><thead><tr><th>Site</th><th>Status</th><th>Files / Size</th><th>Created</th><th>Actions</th></tr></thead><tbody>' + (siteRows || '<tr><td colspan="5" class="muted">No published sites were found for this user.</td></tr>') + '</tbody></table></div></div>' +
   '</div>';
-  const saveVipBtn = $('saveVipBtn');
-  const userVipLevel = $('userVipLevel');
-  const userVipHint = $('userVipHint');
-  if(saveVipBtn && userVipLevel){
-    userVipLevel.onchange = () => {
-      const labels = {
-        '0': '500 MB per file',
-        '1': '5.00 GB per file',
-        '2': '50.00 GB per file',
-        '3': '500.00 GB per file',
-        '4': '1.00 TB per file'
-      };
-      if(userVipHint) userVipHint.textContent = 'Selected limit: ' + (labels[userVipLevel.value] || labels['0']);
-    };
-    saveVipBtn.onclick = async () => {
-      hide($('adminErr'));
-      hide($('adminMsg'));
-      saveVipBtn.disabled = true;
-      saveVipBtn.textContent = 'Saving...';
-      try{
-        await api('/api/admin/users/' + encodeURIComponent(userId),{
-          method:'POST',
-          headers:{'Content-Type':'application/json'},
-          body:JSON.stringify({vipLevel:Number(userVipLevel.value || 0)})
-        });
-        show($('adminMsg'),'VIP level updated');
-        await loadUserDetailPage();
-      }catch(error){
-        show($('adminErr'),error.message);
-      }finally{
-        saveVipBtn.disabled = false;
-        saveVipBtn.textContent = 'Save VIP Level';
-      }
-    };
-  }
   return data;
 }
 function setCleanupBusy(busy){
@@ -2712,11 +2638,11 @@ function setCleanupBusy(busy){
 function setUntrackedCleanupBusy(mode){
   if($('auditUntrackedBtn')){
     $('auditUntrackedBtn').disabled = mode !== '';
-    $('auditUntrackedBtn').textContent = mode === 'audit' ? 'Auditing...' : 'Audit Untracked Objects';
+    $('auditUntrackedBtn').textContent = mode === 'audit' ? 'Auditing...' : 'Audit Incomplete Uploads';
   }
   if($('cleanupUntrackedBtn')){
     $('cleanupUntrackedBtn').disabled = mode !== '';
-    $('cleanupUntrackedBtn').textContent = mode === 'cleanup' ? 'Cleaning...' : 'Clean Untracked Objects';
+    $('cleanupUntrackedBtn').textContent = mode === 'cleanup' ? 'Cleaning...' : 'Clean Incomplete Uploads';
   }
 }
 function setSizeBackfillBusy(busy){
@@ -2760,9 +2686,9 @@ async function runUntrackedAudit(cleanup){
   const staleHours = Math.max(1, Math.min(rawStaleHours, 24 * 30));
   $('staleUploadHours').value = String(staleHours);
   setUntrackedCleanupBusy(cleanup ? 'cleanup' : 'audit');
-  $('untrackedCleanupResult').textContent = cleanup ? 'Cleaning untracked objects...' : 'Auditing untracked objects...';
+  $('untrackedCleanupResult').textContent = cleanup ? 'Cleaning incomplete uploads...' : 'Auditing incomplete uploads...';
   try{
-    const endpoint = cleanup ? '/api/admin/cleanup-untracked-objects' : '/api/admin/audit-untracked-objects?sampleLimit=' + encodeURIComponent(sampleLimit) + '&staleHours=' + encodeURIComponent(staleHours);
+    const endpoint = cleanup ? '/api/admin/cleanup-incomplete-uploads' : '/api/admin/audit-incomplete-uploads?sampleLimit=' + encodeURIComponent(sampleLimit) + '&staleHours=' + encodeURIComponent(staleHours);
     const data = cleanup
       ? await api(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sampleLimit,staleHours})})
       : await api(endpoint);
@@ -2774,14 +2700,14 @@ async function runUntrackedAudit(cleanup){
     ];
     if(cleanup){
       summary.push('deleted ' + data.cleanedObjects);
-      show($('adminMsg'),'Untracked object cleanup completed');
+      show($('adminMsg'),'Incomplete upload cleanup completed');
     }else{
-      show($('adminMsg'),'Untracked object audit completed');
+      show($('adminMsg'),'Incomplete upload audit completed');
     }
     $('untrackedCleanupResult').textContent = summary.join('; ');
     await loadStorageStats();
   }catch(error){
-    $('untrackedCleanupResult').textContent = cleanup ? 'Untracked object cleanup failed' : 'Untracked object audit failed';
+    $('untrackedCleanupResult').textContent = cleanup ? 'Incomplete upload cleanup failed' : 'Incomplete upload audit failed';
     show($('adminErr'),error.message);
   }finally{
     setUntrackedCleanupBusy('');
@@ -2897,6 +2823,7 @@ if($('siteResetBtn')) $('siteResetBtn').onclick = async () => {
 if($('fileSearchBtn')) $('fileSearchBtn').onclick = async () => {
   fileState.q = $('fileQuery').value.trim();
   fileState.scope = $('fileScope').value || 'published';
+  fileState.expired = normalizeFileExpiredFilterValue($('fileExpiredFilter').value);
   fileState.sort = normalizeFileSortValue($('fileSort').value);
   fileState.pageSize = Number($('filePageSize').value || 20);
   fileState.page = 1;
@@ -2904,10 +2831,12 @@ if($('fileSearchBtn')) $('fileSearchBtn').onclick = async () => {
 };
 if($('fileResetBtn')) $('fileResetBtn').onclick = async () => {
   $('fileScope').value = 'published';
+  $('fileExpiredFilter').value = 'all';
   $('fileQuery').value = '';
   $('fileSort').value = 'created_desc';
   $('filePageSize').value = '20';
   fileState.scope = 'published';
+  fileState.expired = 'all';
   fileState.q = '';
   fileState.sort = 'created_desc';
   fileState.pageSize = 20;
@@ -3020,13 +2949,11 @@ async function handleAdminUsers(request, env) {
   const session = await getSessionFromRequest(request, env);
   if (!session) return json({ error: 'Please sign in first' }, 401);
   if (!session.isAdmin) return json({ error: 'You do not have admin access' }, 403);
-  await ensureVipLevelColumn(env);
   await ensureSitesTables(env);
   const result = await env.DB.prepare(
     `SELECT
         users.id AS user_id,
         users.email,
-        users.vip_level,
         users.created_at AS user_created_at,
         (SELECT COUNT(*) FROM api_keys WHERE api_keys.user_id = users.id) AS api_key_count,
         (SELECT COUNT(*) FROM api_keys WHERE api_keys.user_id = users.id AND api_keys.status = 'active') AS active_api_key_count,
@@ -3042,9 +2969,6 @@ async function handleAdminUsers(request, env) {
     users: (result.results || []).map((item) => ({
       id: item.user_id,
       email: item.email,
-      vipLevel: normalizeVipLevel(item.vip_level),
-      vipLabel: vipLabel(item.vip_level),
-      maxFileSize: maxFileSizeForVipLevel(item.vip_level),
       createdAt: item.user_created_at || null,
       apiKeyCount: Number(item.api_key_count || 0),
       activeApiKeyCount: Number(item.active_api_key_count || 0),
@@ -3059,6 +2983,17 @@ async function handleAdminUsers(request, env) {
 function normalizeFileSort(value) {
   if (value === 'size_desc' || value === 'size_asc' || value === 'created_desc') return value;
   return 'created_desc';
+}
+
+function normalizeAdminFileExpiredFilter(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  return normalized === 'active' || normalized === 'expired' ? normalized : 'all';
+}
+
+function matchesAdminFileExpiredFilter(item, expiredFilter) {
+  if (expiredFilter === 'all') return true;
+  const expired = typeof item?.expiresAt === 'string' && new Date(item.expiresAt).getTime() <= Date.now();
+  return expiredFilter === 'expired' ? expired : !expired;
 }
 
 function sortFileList(items, sort) {
@@ -3148,6 +3083,7 @@ async function listAdminUserFacingObjects(env, options = {}) {
   const page = normalizePositiveInt(options.page, 1, 1, 999999);
   const pageSize = normalizePositiveInt(options.pageSize, 20, 1, 100);
   const sort = normalizeFileSort(options.sort);
+  const expired = normalizeAdminFileExpiredFilter(options.expired);
   const trackedOwnership = await collectTrackedFileOwnership(env);
   const publishedMap = await collectPublishedAdminFileMap(env);
   const uploadSessions = await collectOpenUploadSessionMap(env);
@@ -3160,6 +3096,8 @@ async function listAdminUserFacingObjects(env, options = {}) {
     for (const object of listed.objects || []) {
       const key = String(object.key || '');
       if (!key || isInternalBucketKey(key)) continue;
+      const sidecar = await readSidecarMeta(key, env);
+      const expiresAt = normalizeExpiresAt(sidecar?.expiresAt);
       const published = publishedMap.get(key);
       const uploadSession = uploadSessions.get(key);
       const siteRefs = Number(siteRefCounts.get(key) || 0);
@@ -3191,7 +3129,8 @@ async function listAdminUserFacingObjects(env, options = {}) {
         ownerEmail: published?.ownerEmail || '',
         ownerLabel,
         ownerDetail,
-        createdAt: published?.createdAt || uploadSession?.createdAt || null
+        createdAt: published?.createdAt || uploadSession?.createdAt || null,
+        expiresAt: typeof expiresAt === 'string' ? expiresAt : null
       };
       if (query) {
         const haystack = [
@@ -3205,6 +3144,7 @@ async function listAdminUserFacingObjects(env, options = {}) {
         ].join('\n').toLowerCase();
         if (!haystack.includes(query)) continue;
       }
+      if (!matchesAdminFileExpiredFilter(item, expired)) continue;
       items.push(item);
     }
     cursor = listed.truncated ? listed.cursor : undefined;
@@ -3219,6 +3159,7 @@ async function listAdminUserFacingObjects(env, options = {}) {
     meta: {
       q: query,
       scope: 'user-facing',
+      expired,
       sort,
       page: safePage,
       pageSize,
@@ -3237,14 +3178,15 @@ async function handleAdminFiles(request, env) {
   const query = String(url.searchParams.get('q') || '').trim().toLowerCase();
   const queryLike = `%${query}%`;
   const scope = url.searchParams.get('scope') === 'user-facing' ? 'user-facing' : 'published';
+  const expired = normalizeAdminFileExpiredFilter(url.searchParams.get('expired'));
   const sort = normalizeFileSort(url.searchParams.get('sort'));
   const page = normalizePositiveInt(url.searchParams.get('page'), 1, 1, 999999);
   const pageSize = normalizePositiveInt(url.searchParams.get('pageSize'), 20, 1, 100);
-  const offset = (page - 1) * pageSize;
+  const pageOffset = (page - 1) * pageSize;
   if (scope === 'user-facing') {
     return json({
       success: true,
-      ...(await listAdminUserFacingObjects(env, { query, page, pageSize, sort }))
+      ...(await listAdminUserFacingObjects(env, { query, page, pageSize, sort, expired }))
     });
   }
   const orderBy = sort === 'size_desc'
@@ -3255,13 +3197,77 @@ async function handleAdminFiles(request, env) {
   const filters = `WHERE
     (? = '' OR lower(published_files.id) LIKE ? OR lower(published_files.file_name) LIKE ? OR lower(COALESCE(users.email, '')) LIKE ? OR lower(COALESCE(api_keys.name, '')) LIKE ?)`;
   const bindings = [query, queryLike, queryLike, queryLike, queryLike];
-  const countRow = await env.DB.prepare(
-    `SELECT COUNT(*) AS total
-     FROM published_files
-     LEFT JOIN users ON users.id = published_files.user_id
-     LEFT JOIN api_keys ON api_keys.id = published_files.api_key_id
-     ${filters}`
-  ).bind(...bindings).first();
+  if (expired === 'all') {
+    const countRow = await env.DB.prepare(
+      `SELECT COUNT(*) AS total
+       FROM published_files
+       LEFT JOIN users ON users.id = published_files.user_id
+       LEFT JOIN api_keys ON api_keys.id = published_files.api_key_id
+       ${filters}`
+    ).bind(...bindings).first();
+    const result = await env.DB.prepare(
+      `SELECT
+          published_files.id,
+          published_files.file_name,
+          published_files.content_type,
+          published_files.size,
+          published_files.publish_origin,
+          published_files.view_url,
+          published_files.download_url,
+          published_files.play_url,
+          published_files.client_ip,
+          published_files.client_region,
+          published_files.api_key_id,
+          published_files.user_id,
+          published_files.created_at,
+          users.email AS owner_email,
+          api_keys.name AS api_key_name
+       FROM published_files
+       LEFT JOIN users ON users.id = published_files.user_id
+       LEFT JOIN api_keys ON api_keys.id = published_files.api_key_id
+       ${filters}
+       ORDER BY ${orderBy}
+       LIMIT ? OFFSET ?`
+    ).bind(...bindings, pageSize, pageOffset).all();
+    const total = Number(countRow?.total || 0);
+    const totalPages = Math.max(1, Math.ceil(total / pageSize));
+    const safePage = Math.min(page, totalPages);
+    return json({
+      success: true,
+      files: await Promise.all((result.results || []).map(async (item) => {
+        const sidecar = await readSidecarMeta(item.id, env);
+        const expiresAt = normalizeExpiresAt(sidecar?.expiresAt);
+        return {
+          id: item.id,
+          fileName: item.file_name || item.id,
+          contentType: item.content_type || '',
+          size: Number(item.size || 0),
+          publishOrigin: item.publish_origin || '',
+          viewUrl: item.view_url || '',
+          downloadUrl: item.download_url || '',
+          playUrl: item.play_url || '',
+          clientIp: item.client_ip || '',
+          clientRegion: item.client_region || '',
+          apiKeyId: item.api_key_id || null,
+          apiKeyName: item.api_key_name || '',
+          userId: item.user_id || null,
+          ownerEmail: item.owner_email || '',
+          createdAt: item.created_at || null,
+          expiresAt: typeof expiresAt === 'string' ? expiresAt : null,
+        };
+      })),
+      meta: {
+        q: query,
+        scope,
+        expired,
+        sort,
+        page: safePage,
+        pageSize,
+        total,
+        totalPages
+      }
+    });
+  }
   const result = await env.DB.prepare(
     `SELECT
         published_files.id,
@@ -3283,14 +3289,12 @@ async function handleAdminFiles(request, env) {
      LEFT JOIN users ON users.id = published_files.user_id
      LEFT JOIN api_keys ON api_keys.id = published_files.api_key_id
      ${filters}
-     ORDER BY ${orderBy}
-     LIMIT ? OFFSET ?`
-  ).bind(...bindings, pageSize, offset).all();
-  const total = Number(countRow?.total || 0);
-  const totalPages = Math.max(1, Math.ceil(total / pageSize));
-  return json({
-    success: true,
-    files: (result.results || []).map((item) => ({
+     ORDER BY ${orderBy}`
+  ).bind(...bindings).all();
+  const filesWithExpiry = await Promise.all((result.results || []).map(async (item) => {
+    const sidecar = await readSidecarMeta(item.id, env);
+    const expiresAt = normalizeExpiresAt(sidecar?.expiresAt);
+    return {
       id: item.id,
       fileName: item.file_name || item.id,
       contentType: item.content_type || '',
@@ -3306,12 +3310,23 @@ async function handleAdminFiles(request, env) {
       userId: item.user_id || null,
       ownerEmail: item.owner_email || '',
       createdAt: item.created_at || null,
-    })),
+      expiresAt: typeof expiresAt === 'string' ? expiresAt : null,
+    };
+  }));
+  const filteredFiles = filesWithExpiry.filter((item) => matchesAdminFileExpiredFilter(item, expired));
+  const total = filteredFiles.length;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const offset = (safePage - 1) * pageSize;
+  return json({
+    success: true,
+    files: filteredFiles.slice(offset, offset + pageSize),
     meta: {
       q: query,
       scope,
+      expired,
       sort,
-      page,
+      page: safePage,
       pageSize,
       total,
       totalPages
@@ -3323,11 +3338,10 @@ async function handleAdminUserDetail(request, userId, env) {
   const session = await getSessionFromRequest(request, env);
   if (!session) return json({ error: 'Please sign in first' }, 401);
   if (!session.isAdmin) return json({ error: 'You do not have admin access' }, 403);
-  await ensureVipLevelColumn(env);
   await ensurePublishedFilesTable(env);
   await ensureSitesTables(env);
   const user = await env.DB.prepare(
-    `SELECT id, email, vip_level, created_at, verified_at, last_login_at
+    `SELECT id, email, created_at, verified_at, last_login_at
      FROM users
      WHERE id = ?`
   ).bind(userId).first();
@@ -3368,9 +3382,6 @@ async function handleAdminUserDetail(request, userId, env) {
     user: {
       id: user.id,
       email: user.email,
-      vipLevel: normalizeVipLevel(user.vip_level),
-      vipLabel: vipLabel(user.vip_level),
-      maxFileSize: maxFileSizeForVipLevel(user.vip_level),
       createdAt: user.created_at || null,
       verifiedAt: user.verified_at || null,
       lastLoginAt: user.last_login_at || null
@@ -3415,29 +3426,6 @@ async function handleAdminUserDetail(request, userId, env) {
       expiresAt: item.expires_at || null,
       createdAt: item.created_at || null
     }))
-  });
-}
-
-async function handleAdminUpdateUser(request, userId, env) {
-  const session = await getSessionFromRequest(request, env);
-  if (!session) return json({ error: 'Please sign in first' }, 401);
-  if (!session.isAdmin) return json({ error: 'You do not have admin access' }, 403);
-  await ensureVipLevelColumn(env);
-  let body;
-  try {
-    body = await request.json();
-  } catch (error) {
-    return json({ error: `Request body must be JSON: ${error.message}` }, 400);
-  }
-  const vipLevel = normalizeVipLevel(body?.vipLevel);
-  const result = await env.DB.prepare('UPDATE users SET vip_level = ? WHERE id = ?').bind(vipLevel, userId).run();
-  if (!result.meta?.changes) return json({ error: 'User not found' }, 404);
-  return json({
-    success: true,
-    vipLevel,
-    vipLabel: vipLabel(vipLevel),
-    maxFileSize: maxFileSizeForVipLevel(vipLevel),
-    maxFileSizeLabel: formatSize(maxFileSizeForVipLevel(vipLevel))
   });
 }
 
@@ -3506,6 +3494,14 @@ async function handleAdminCleanupUntrackedObjects(request, env) {
     cleanup: true,
     staleSessionThresholdMs: staleHours * 60 * 60 * 1000
   }));
+}
+
+async function handleAdminAuditIncompleteUploads(request, env) {
+  return handleAdminAuditUntrackedObjects(request, env);
+}
+
+async function handleAdminCleanupIncompleteUploads(request, env) {
+  return handleAdminCleanupUntrackedObjects(request, env);
 }
 
 async function handleAdminBackfillPublishedFileSizes(request, env) {
@@ -3964,11 +3960,13 @@ export default {
     if (url.pathname === '/api/admin/files' && request.method === 'GET') return handleAdminFiles(request, env);
     if (url.pathname === '/api/admin/storage-stats' && request.method === 'GET') return handleAdminStorageStats(request, env);
     if (url.pathname === '/api/admin/audit-untracked-objects' && request.method === 'GET') return handleAdminAuditUntrackedObjects(request, env);
+    if (url.pathname === '/api/admin/audit-incomplete-uploads' && request.method === 'GET') return handleAdminAuditIncompleteUploads(request, env);
     if (url.pathname === '/api/admin/sites' && request.method === 'GET') return handleAdminSites(request, env);
     if (url.pathname === '/api/admin/publish-domain' && request.method === 'GET') return handleAdminGetPublishDomain(request, env);
     if (url.pathname === '/api/admin/publish-domain' && request.method === 'POST') return handleAdminSetPublishDomain(request, env);
     if (url.pathname === '/api/admin/cleanup-expired' && request.method === 'POST') return handleAdminCleanupExpired(request, env);
     if (url.pathname === '/api/admin/cleanup-untracked-objects' && request.method === 'POST') return handleAdminCleanupUntrackedObjects(request, env);
+    if (url.pathname === '/api/admin/cleanup-incomplete-uploads' && request.method === 'POST') return handleAdminCleanupIncompleteUploads(request, env);
     if (url.pathname === '/api/admin/backfill-published-file-sizes' && request.method === 'POST') return handleAdminBackfillPublishedFileSizes(request, env);
 
     const adminKeyMatch = url.pathname.match(/^\/api\/admin\/api-keys\/([^/]+)$/);
@@ -3982,9 +3980,6 @@ export default {
     const adminUserDetailMatch = url.pathname.match(/^\/api\/admin\/users\/([^/]+)$/);
     if (adminUserDetailMatch && request.method === 'GET') {
       return handleAdminUserDetail(request, decodeURIComponent(adminUserDetailMatch[1]), env);
-    }
-    if (adminUserDetailMatch && request.method === 'POST') {
-      return handleAdminUpdateUser(request, decodeURIComponent(adminUserDetailMatch[1]), env);
     }
     const adminSiteUpdateLinkMatch = url.pathname.match(/^\/api\/admin\/sites\/([^/]+)\/update-link$/);
     if (adminSiteUpdateLinkMatch && request.method === 'POST') {

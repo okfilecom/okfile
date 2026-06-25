@@ -1,0 +1,1008 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OkFile - Manual Upload</title>
+<meta name="description" id="metaDesc" content="OkFile manual upload page for images, videos, PDFs, common files, and full static site folders. Small files use quick upload automatically, larger files switch to multipart, and API or Python CLI integration remains the recommended path for agents.">
+<meta name="robots" content="noindex,follow">
+<meta name="theme-color" content="#f5f7fb">
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  html{background:#f5f7fb}
+  body{font-family:Inter,ui-sans-serif,system-ui,-apple-system,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;background:linear-gradient(180deg,#f7f9fc 0%,#eef3f9 100%);color:#334155;min-height:100vh;display:flex;flex-direction:column;align-items:center}
+  .topbar{position:sticky;top:0;z-index:30;width:100%;background:rgba(247,249,252,.92);backdrop-filter:blur(14px);border-bottom:1px solid #dde6f0}
+  .topbar-inner{width:min(1120px,100%);margin:0 auto;padding:14px 24px;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
+  .brand{display:inline-flex;align-items:center;gap:10px;text-decoration:none}
+  .brand-logo{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:10px;background:linear-gradient(135deg,#f48120,#ffb347);color:#fff;font-weight:800;box-shadow:0 8px 18px rgba(244,129,32,.2)}
+  .brand-copy strong{display:block;font-size:16px;color:#0f172a}
+  .brand-copy span{display:block;font-size:12px;color:#64748b}
+  .top-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .top-actions a{padding:8px 14px;border-radius:999px;border:1px solid #dce4ee;background:#fff;color:#475569;text-decoration:none;font-size:12px;box-shadow:0 1px 2px rgba(15,23,42,.04)}
+  .top-actions a:hover{border-color:#c7d6ea;color:#0f172a;background:#f8fafc}
+  .top-actions a.primary{background:#1d4ed8;border-color:#1d4ed8;color:#fff;box-shadow:0 8px 18px rgba(29,78,216,.14)}
+  .top-actions a.primary:hover{background:#1e40af;border-color:#1e40af}
+  .header{width:100%;max-width:720px;padding:24px 24px 0;text-align:center}
+  .crumbs{display:flex;justify-content:center;gap:8px;flex-wrap:wrap;margin-bottom:14px;font-size:12px;color:#94a3b8}
+  .crumbs a{color:#1d4ed8;text-decoration:none}
+  .header h1{font-size:28px;font-weight:700;color:#0f172a;margin-bottom:8px}.header h1 span{color:#f48120}
+  .header p{font-size:14px;color:#64748b}
+  /* Dropzone */
+  .dropzone{width:100%;max-width:720px;margin-top:24px;border:2px dashed #cbd5e1;border-radius:20px;padding:48px 24px;text-align:center;cursor:pointer;transition:.3s;background:#fff;display:block;touch-action:manipulation;box-shadow:0 12px 28px rgba(15,23,42,.05)}
+  .dropzone:hover,.dropzone.dragover{border-color:#1d4ed8;background:#f8fbff}
+  .dropzone.has-files{padding:24px;text-align:left}
+  .dropzone .icon{width:48px;height:48px;margin:0 auto 12px;border-radius:50%;background:#eff6ff;display:flex;align-items:center;justify-content:center;font-size:22px;color:#1d4ed8}
+  .dropzone.has-files .icon{margin:0 0 12px}
+  .dropzone .label{font-size:15px;color:#334155}.dropzone .label em{color:#1d4ed8;font-style:normal;cursor:pointer}
+  .native-file-input{position:absolute;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none}
+  .picker-actions{width:100%;max-width:720px;display:flex;justify-content:center;gap:10px;flex-wrap:wrap;margin-top:12px}
+  .picker-btn{padding:10px 18px;border-radius:12px;border:1px solid #dce4ee;background:#fff;color:#334155;cursor:pointer;transition:.2s;box-shadow:0 1px 2px rgba(15,23,42,.04)}
+  .picker-btn:hover{border-color:#c7d6ea;color:#0f172a;background:#f8fafc}
+  .upload-note,.site-publish-note{width:100%;max-width:720px;margin-top:12px;padding:14px 16px;border-radius:14px;background:#f8fbff;border:1px solid #d7e6fb;color:#334155;font-size:13px;line-height:1.7}
+  .upload-note strong,.site-publish-note strong{color:#1d4ed8}
+
+  /* File list */
+  .file-list{width:100%;max-width:720px;margin-top:16px;display:none}
+  .file-list.show{display:block}
+  .file-list-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+  .file-list-header .count{font-size:13px;color:#64748b}
+  .file-list-header .clear-btn{font-size:12px;color:#ef4444;cursor:pointer;background:none;border:none;opacity:.7;transition:.2s}
+  .file-list-header .clear-btn:hover{opacity:1}
+  .file-item{display:flex;align-items:center;gap:12px;padding:10px 14px;background:#fff;border:1px solid #dce4ee;border-radius:12px;margin-bottom:8px;transition:.2s;box-shadow:0 4px 12px rgba(15,23,42,.04)}
+  .file-item:hover{border-color:#c7d6ea}
+  .file-item .thumb{width:48px;height:48px;border-radius:8px;object-fit:contain;background:#f8fafc;flex-shrink:0}
+  .file-item video.thumb{object-fit:cover}
+  .file-item .info{flex:1;min-width:0}
+  .file-item .name{font-size:13px;color:#334155;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .file-item .size{font-size:11px;color:#64748b;margin-top:2px}
+  .file-item .status{font-size:11px;width:72px;text-align:right;flex-shrink:0}
+  .item-status.waiting{color:#94a3b8}
+  .item-status.uploading{color:#f59e0b}
+  .item-status.done{color:#16a34a}
+  .item-status.error{color:#ef4444}
+  .file-item .remove{background:none;border:none;color:#94a3b8;cursor:pointer;font-size:16px;padding:4px;flex-shrink:0;transition:.15s;line-height:1}
+  .file-item .remove:hover{color:#ef4444}
+  .progress-bar{height:4px;background:#e2e8f0;border-radius:999px;overflow:hidden;margin-top:6px}
+  .progress-bar .fill{height:100%;background:#1d4ed8;width:0;transition:.15s;border-radius:999px}
+
+  /* Actions bar */
+  .actions-bar{width:100%;max-width:720px;margin-top:16px;display:none}
+  .actions-bar.show{display:flex;gap:10px;justify-content:flex-start;flex-wrap:wrap}
+  .actions-bar button{padding:10px 28px;border-radius:10px;font-size:14px;cursor:pointer;transition:.2s;font-weight:500}
+  .btn-upload{background:#1d4ed8;color:#fff;border:1px solid #1d4ed8;box-shadow:0 8px 18px rgba(29,78,216,.16)}
+  .btn-upload:hover{background:#1e40af}
+  .btn-upload:disabled{background:#cbd5e1;border-color:#cbd5e1;color:#64748b;cursor:not-allowed;box-shadow:none}
+  .btn-clear{background:#fff;border:1px solid #dce4ee;color:#475569}
+  .btn-clear:hover{border-color:#c7d6ea;color:#0f172a;background:#f8fafc}
+
+  /* Error */
+  .error{width:100%;max-width:720px;color:#ef4444;font-size:13px;text-align:center;margin-top:12px;display:none}
+  .error.show{display:block}
+
+  /* Results grid */
+  .results{width:100%;max-width:720px;margin-top:20px;display:none}
+  .results.show{display:block}
+  .results .header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
+  .results .header h3{font-size:16px;color:#0f172a}
+  .results .header .copy-all{padding:7px 16px;border-radius:999px;background:#1d4ed8;color:#fff;border:none;font-size:12px;cursor:pointer;transition:.2s}
+  .results .header .copy-all:hover{background:#1e40af}
+  .site-result-card{display:none;background:#fff;border:1px solid #c7d7f7;border-radius:14px;padding:16px;margin-bottom:16px;box-shadow:0 8px 20px rgba(15,23,42,.05)}
+  .site-result-card.show{display:block}
+  .site-result-title{font-size:15px;color:#0f172a;font-weight:600;margin-bottom:8px}
+  .site-result-meta{font-size:12px;color:#1d4ed8;line-height:1.7;margin-bottom:10px}
+  .site-result-notes{display:grid;gap:8px;margin:12px 0}
+  .site-result-note{font-size:12px;line-height:1.6;color:#334155;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:10px 12px}
+  .site-result-links{display:grid;gap:8px}
+  .site-result-links .link{font-size:12px;color:#1d4ed8;word-break:break-all;font-family:'SF Mono',Consolas,monospace}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px}
+  .result-card{background:#fff;border:1px solid #dce4ee;border-radius:14px;overflow:hidden;transition:.2s;box-shadow:0 6px 14px rgba(15,23,42,.04)}
+  .result-card:hover{border-color:#c7d6ea}
+  .result-card .thumb-wrap{text-align:center;background:#f8fafc;position:relative;padding:8px}
+  .result-card .thumb-wrap img{max-width:100%;max-height:160px;object-fit:contain;border-radius:6px}
+  .result-card .thumb-wrap video{max-width:100%;max-height:160px;border-radius:6px;background:#000}
+  .type-tag{position:absolute;top:10px;left:10px;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:600}
+  .type-tag.img{background:#eff6ff;color:#1d4ed8}
+  .type-tag.vid{background:#fff1f2;color:#e11d48}
+  .result-card .body{padding:10px 12px}
+  .result-card .link{font-size:11px;color:#1d4ed8;word-break:break-all;font-family:'SF Mono',Consolas,monospace;margin-bottom:8px;line-height:1.4}
+  .result-card .sub-link{font-size:11px;color:#0369a1;word-break:break-all;font-family:'SF Mono',Consolas,monospace;margin-top:-2px;margin-bottom:8px;line-height:1.4}
+  .link-actions{display:flex;gap:6px}
+  .link-actions button{flex:1;padding:5px 0;border-radius:6px;font-size:11px;cursor:pointer;transition:.15s}
+  .cp-btn{background:#fff;border:1px solid #dce4ee;color:#475569}
+  .cp-btn:hover{border-color:#c7d6ea;color:#0f172a;background:#f8fafc}
+  .open-btn{background:#eff6ff;border:1px solid #c7d7f7;color:#1d4ed8}
+  .open-btn:hover{border-color:#93c5fd;color:#1e3a8a}
+
+  /* Footer & Toast */
+  .footer-info{margin-top:auto;padding:24px;font-size:12px;color:#64748b;text-align:center}
+  .footer-info a{color:#1d4ed8;text-decoration:none}
+  .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);padding:12px 24px;background:#16a34a;color:#fff;border-radius:8px;font-size:14px;opacity:0;transition:.3s;pointer-events:none;z-index:100}
+  .toast.show{opacity:1}
+  @media (max-width:760px){
+    .topbar-inner{padding:12px 16px}
+    .header{padding:20px 16px 0}
+  }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <a class="brand" href="/en/">
+      <span class="brand-logo">O</span>
+      <span class="brand-copy">
+        <strong>OkFile Console</strong>
+        <span>Manual Upload</span>
+      </span>
+    </a>
+    <div class="top-actions">
+      <a href="/en/">Home</a>
+      <a href="/en/account/">Account</a>
+      <a href="/SKILL.md" target="_blank" rel="noopener">Docs</a>
+      <a class="primary" href="https://pypi.org/project/okfile/" target="_blank" rel="noopener">CLI</a>
+    </div>
+  </div>
+</div>
+
+<div class="header">
+  <div class="crumbs">
+    <a href="/en/">Home</a>
+    <span>/</span>
+    <span>Manual Upload</span>
+  </div>
+</div>
+
+<!-- Dropzone -->
+<label class="dropzone" id="dz" for="fi">
+  <div class="icon">&#8679;</div>
+  <div class="label">Drag and drop files here, or <em>click to select</em></div>
+</label>
+<input type="file" id="fi" class="native-file-input" multiple>
+<input type="file" id="di" class="native-file-input" webkitdirectory directory multiple>
+<div class="picker-actions">
+  <button type="button" class="picker-btn" id="pickFilesBtn">Select Files to Upload</button>
+  <button type="button" class="picker-btn" id="pickFolderBtn">Select Folder as Site</button>
+</div>
+
+<!-- Actions -->
+<div class="actions-bar" id="ab">
+  <button type="button" class="btn-upload" id="upBtn">&#9653; <span class="btn-text">Start Upload</span> (<span id="uc">0</span>)</button>
+  <button class="btn-clear" onclick="clearFiles()">Clear and Reselect</button>
+</div>
+
+<!-- Results -->
+<div class="results" id="res">
+  <div class="header">
+    <h3>&#10004; Upload Complete</h3>
+    <button class="copy-all" onclick="copyAllLinks()">Copy All Links</button>
+  </div>
+  <div class="site-result-card" id="siteResultCard"></div>
+  <div class="grid" id="grid"></div>
+</div>
+
+<!-- File List -->
+<div class="file-list" id="fl">
+  <div class="file-list-header">
+    <span class="count" id="fc">0 files</span>
+    <button class="clear-btn" onclick="clearFiles()">Clear List</button>
+  </div>
+  <div id="fiList"></div>
+</div>
+
+<div class="error" id="err"></div>
+
+<div class="footer-info">Powered by OkFile &middot; Manual Upload &middot; Quick Upload + Multipart + Site Publish &middot; API and Python CLI recommended for automation</div>
+<div class="toast" id="ts"></div>
+
+<script>
+// ── Copy ──
+const currentLang = 'en';
+document.documentElement.setAttribute('lang', currentLang);
+
+const t = {
+  title: 'OkFile - Manual Upload',
+  exceeds: 'exceeds limit',
+  waiting: 'Wait',
+  done: 'Done',
+  error: 'Error',
+  uploading: 'Uploading...',
+  allDone: 'All Done',
+  copyAll: 'All links copied!',
+  copied: 'Copied!',
+  copyLink: 'Copy Link',
+  copyDirect: 'Copy Direct',
+  preview: 'Preview',
+  uploadFail: 'Upload failed',
+  netErr: 'Network error',
+  noUrl: 'No valid upload URL returned',
+  fileWord: 'files',
+  startUpload: 'Start Upload',
+  siteWord: 'site files',
+  mixModeError: 'Please do not mix folder upload and loose files in one batch',
+  siteUploading: 'Publishing site...',
+  siteReady: 'Site published',
+  siteRoot: 'Site Domain',
+  siteEntry: 'Entry Page',
+  siteHost: 'Subdomain',
+  copySite: 'Copy Site URL',
+  openSite: 'Open Site',
+  siteRootStripped: 'The shared top-level folder was stripped and used as the site root.',
+  siteNoIndexListing: 'No root index.html was found, so the site home shows a directory listing with inline image/video access and download links for other files.',
+  siteAutoListingHint: 'OkFile generated the directory listing automatically. Agents only need to upload the real folder tree and should not create a synthetic index.html for listing.',
+  siteSubdirsReady: 'Nested subdirectories were preserved and remain directly accessible after publishing.',
+  siteUpdateBanner: 'You are updating an existing site: {siteId}. Select the full new folder tree and OkFile will switch to the new release atomically after upload.',
+  siteUpdateFailed: 'Some files failed, so site publishing was cancelled: ',
+  siteVersionSwitched: 'Switched to site release V{versionNo}'
+};
+function _t(key) { return t[key]; }
+
+// ── State ──
+let pendingFiles = []; // { file, thumbUrl, status, progress, result, fileType, uid }
+let batchMode = null;
+let siteResult = null;
+let siteUploadMeta = null;
+let uploadConfig = {
+  maxSize: 500 * 1024 * 1024,
+  quickUploadMaxSize: 5 * 1024 * 1024,
+  multipartThreshold: 25 * 1024 * 1024,
+  partSize: 10 * 1024 * 1024,
+  siteUpload: {
+    supported: true,
+    maxFiles: 300,
+    maxTotalSize: 1024 * 1024 * 1024,
+    entryDefault: 'index.html'
+  }
+};
+const MULTIPART_UPLOAD_CONCURRENCY = 3;
+
+function applyLangToJS() {
+  document.title = _t('title');
+  if(pendingFiles.length) {
+    document.getElementById('fc').textContent = `${pendingFiles.length} ${batchMode === 'site' ? _t('siteWord') : _t('fileWord')}`;
+  }
+  
+  const upBtn = document.getElementById('upBtn');
+  if (upBtn.disabled) {
+    upBtn.innerHTML = batchMode === 'site' ? _t('siteUploading') : _t('uploading');
+  } else {
+    const isAllDone = pendingFiles.length > 0 && pendingFiles.every(f => f.status === 'done');
+    const text = isAllDone ? _t('allDone') : _t('startUpload');
+    upBtn.innerHTML = `&#9653; <span class="btn-text">${text}</span> (<span id="uc">${pendingFiles.length}</span>)`;
+  }
+}
+applyLangToJS();
+
+const API = location.origin;
+const $ = id => document.getElementById(id);
+const dz=$('dz'), fi=$('fi'), di=$('di'), fl=$('fl'), fc=$('fc'), fiList=$('fiList');
+const ab=$('ab'), upBtn=$('upBtn');
+const err=$('err'), res=$('res'), grid=$('grid'), ts=$('ts');
+const siteResultCard = $('siteResultCard');
+const pickFilesBtn = $('pickFilesBtn');
+const pickFolderBtn = $('pickFolderBtn');
+const pageParams = new URLSearchParams(location.search);
+const siteUpdateTargetId = /^st_[a-z0-9]+$/i.test(String(pageParams.get('siteId') || '').trim())
+  ? String(pageParams.get('siteId') || '').trim()
+  : '';
+const siteUpdateToken = String(pageParams.get('siteUpdateToken') || '').trim();
+
+if (siteUpdateTargetId) {
+  const noteHost = document.querySelector('.site-publish-note');
+  if (noteHost) {
+    const banner = document.createElement('div');
+    banner.className = 'site-result-note';
+    banner.style.marginTop = '10px';
+    banner.textContent = _t('siteUpdateBanner').replace('{siteId}', siteUpdateTargetId);
+    noteHost.appendChild(banner);
+  }
+}
+
+if (upBtn) {
+  upBtn.addEventListener('click', () => {
+    uploadAll();
+  });
+}
+
+function openPicker(input) {
+  if (!input) return;
+  try {
+    if (typeof input.showPicker === 'function') {
+      input.showPicker();
+      return;
+    }
+  } catch (_) {}
+  input.click();
+}
+
+if (pickFilesBtn) pickFilesBtn.addEventListener('click', () => openPicker(fi));
+if (pickFolderBtn) pickFolderBtn.addEventListener('click', () => openPicker(di));
+
+let MAX_SIZE = uploadConfig.maxSize;
+
+// ── Dropzone events ──
+dz.ondragover = e => { e.preventDefault(); dz.classList.add('dragover') };
+dz.ondragleave = () => dz.classList.remove('dragover');
+dz.ondrop = e => {
+  e.preventDefault(); dz.classList.remove('dragover');
+  if (e.dataTransfer.files.length) addFiles(e.dataTransfer.files, detectSelectionMode(e.dataTransfer.files));
+};
+
+function detectSelectionMode(fileList) {
+  const files = Array.from(fileList || []);
+  return files.some(f => f.webkitRelativePath) ? 'site' : 'files';
+}
+
+function normalizedRelativePath(file, mode) {
+  const raw = mode === 'site' ? (file.webkitRelativePath || file.name) : file.name;
+  return String(raw || file.name || '').replace(/\\/g, '/').replace(/^\/+/, '');
+}
+
+function handleSelectedFiles(input, mode) {
+  const files = Array.from(input.files || []);
+  if (!files.length) return;
+  addFiles(files, mode);
+}
+
+fi.addEventListener('change', () => {
+  window.setTimeout(() => handleSelectedFiles(fi, 'files'), 0);
+});
+
+fi.addEventListener('input', () => {
+  window.setTimeout(() => handleSelectedFiles(fi, 'files'), 0);
+});
+
+di.addEventListener('change', () => {
+  window.setTimeout(() => handleSelectedFiles(di, 'site'), 0);
+});
+
+di.addEventListener('input', () => {
+  window.setTimeout(() => handleSelectedFiles(di, 'site'), 0);
+});
+
+function addFiles(fileList, mode) {
+  const resolvedMode = mode || detectSelectionMode(fileList);
+  if (batchMode && pendingFiles.length && batchMode !== resolvedMode) {
+    showErr(_t('mixModeError'));
+    return;
+  }
+  batchMode = batchMode || resolvedMode;
+  err.classList.remove('show');
+  res.classList.remove('show');
+  siteResult = null;
+  siteUploadMeta = null;
+  siteResultCard.classList.remove('show');
+  siteResultCard.innerHTML = '';
+  for (const f of fileList) {
+    if (f.size > MAX_SIZE) {
+      const label = normalizedRelativePath(f, resolvedMode);
+      showErr(`${label} ${_t('exceeds')} ${Math.round(MAX_SIZE/1024/1024)}MB (${(f.size/1024/1024).toFixed(1)}MB)`);
+      continue;
+    }
+    const detectedType = String(f.type || '');
+    const isVideo = detectedType.startsWith('video/');
+    const isImage = detectedType.startsWith('image/');
+    const item = {
+      file: f,
+      thumbUrl: '',
+      status: 'waiting',
+      progress: 0,
+      result: null,
+      fileType: isVideo ? 'video' : (isImage ? 'image' : 'file'),
+      relativePath: normalizedRelativePath(f, resolvedMode),
+      uid: 'uid_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7)
+    };
+    if (isVideo || isImage) {
+      item.thumbUrl = URL.createObjectURL(f);
+    }
+    pendingFiles.push(item);
+  }
+  renderFileList();
+  applyLangToJS();
+  fi.value = '';
+  di.value = '';
+}
+
+function removeFile(uid) {
+  pendingFiles = pendingFiles.filter(f => f.uid !== uid);
+  if (!pendingFiles.length) {
+    batchMode = null;
+    siteResult = null;
+    siteUploadMeta = null;
+  }
+  renderFileList();
+  applyLangToJS();
+}
+
+function clearFiles() {
+  pendingFiles = [];
+  batchMode = null;
+  siteResult = null;
+  siteUploadMeta = null;
+  renderFileList();
+  applyLangToJS();
+  res.classList.remove('show');
+  siteResultCard.classList.remove('show');
+  siteResultCard.innerHTML = '';
+  grid.innerHTML = '';
+  err.classList.remove('show');
+  fi.value = '';
+  di.value = '';
+}
+
+function renderFileList() {
+  if (!pendingFiles.length) {
+    fl.classList.remove('show'); ab.classList.remove('show');
+    fl.style.display = 'none';
+    ab.style.display = 'none';
+    dz.classList.remove('has-files');
+    dz.style.display = 'block';
+    return;
+  }
+
+  fl.classList.add('show'); ab.classList.add('show');
+  fl.style.display = 'block';
+  ab.style.display = 'flex';
+  dz.classList.add('has-files');
+  dz.style.display = 'block';
+  fc.textContent = `${pendingFiles.length} ${batchMode === 'site' ? _t('siteWord') : _t('fileWord')}`;
+
+  fiList.innerHTML = '';
+  for (const item of pendingFiles) {
+    const row = document.createElement('div');
+    row.className = 'file-item';
+    row.dataset.uid = item.uid;
+
+    let stText, stClass;
+    switch(item.status) {
+      case 'waiting':   stText=_t('waiting'); stClass='waiting'; break;
+      case 'uploading': stText=`${item.progress}%`; stClass='uploading'; break;
+      case 'done':      stText=_t('done'); stClass='done'; break;
+      default:          stText=_t('error'); stClass='error'; break;
+    }
+
+    let mediaNode;
+    if (item.fileType === 'video' && item.thumbUrl) {
+      mediaNode = document.createElement('video');
+      mediaNode.className = 'thumb';
+      mediaNode.src = item.thumbUrl;
+      mediaNode.preload = 'metadata';
+      mediaNode.muted = true;
+    } else if (item.fileType === 'image' && item.thumbUrl) {
+      mediaNode = document.createElement('img');
+      mediaNode.className = 'thumb';
+      mediaNode.src = item.thumbUrl;
+      mediaNode.alt = '';
+    } else {
+      mediaNode = document.createElement('div');
+      mediaNode.className = 'thumb';
+      mediaNode.style.display = 'flex';
+      mediaNode.style.alignItems = 'center';
+      mediaNode.style.justifyContent = 'center';
+      mediaNode.style.color = '#666';
+      mediaNode.style.fontSize = '18px';
+      mediaNode.textContent = 'FILE';
+    }
+
+    const info = document.createElement('div');
+    info.className = 'info';
+    const name = document.createElement('div');
+    name.className = 'name';
+    name.textContent = item.relativePath || item.file.name;
+    const size = document.createElement('div');
+    size.className = 'size';
+    size.textContent = fmtSize(item.file.size) + (item.status === 'done' && item.result ? ` · ${item.result.type.toUpperCase()}` : '');
+    info.appendChild(name);
+    info.appendChild(size);
+
+    if (item.status === 'uploading') {
+      const progressBar = document.createElement('div');
+      progressBar.className = 'progress-bar';
+      const fill = document.createElement('div');
+      fill.className = 'fill';
+      fill.style.width = `${item.progress}%`;
+      progressBar.appendChild(fill);
+      info.appendChild(progressBar);
+    }
+
+    const status = document.createElement('div');
+    status.className = `status item-status ${stClass}`;
+    status.textContent = stText;
+
+    row.appendChild(mediaNode);
+    row.appendChild(info);
+    row.appendChild(status);
+
+    if (item.status !== 'uploading') {
+      const removeBtn = document.createElement('button');
+      removeBtn.className = 'remove';
+      removeBtn.type = 'button';
+      removeBtn.textContent = '\u00D7';
+      removeBtn.addEventListener('click', () => removeFile(item.uid));
+      row.appendChild(removeBtn);
+    }
+
+    fiList.appendChild(row);
+  }
+}
+
+// ══════════════════════════════════════════════
+// Upload Engine — Presigned PUT to R2
+// ══════════════════════════════════════════════
+async function loadUploadConfig() {
+  try {
+    const res = await fetch(API + '/api/upload/config');
+    const data = await res.json();
+    if (!res.ok || !(data && data.success)) return;
+    uploadConfig = data;
+    MAX_SIZE = data.maxSize || MAX_SIZE;
+    const maxLabel = `${Math.round(MAX_SIZE / 1024 / 1024)}MB`;
+    document.querySelectorAll('.max-size-label').forEach(el => el.textContent = maxLabel);
+  } catch (_) {}
+}
+
+function updateItemProgress(item, progress) {
+  item.progress = Math.max(0, Math.min(100, progress));
+  const el = document.querySelector(`[data-uid="${item.uid}"] .fill`);
+  if (el) el.style.width = item.progress + '%';
+  const stEl = document.querySelector(`[data-uid="${item.uid}"] .status`);
+  if (stEl) stEl.textContent = `${item.progress}%`;
+}
+
+function normalizeETag(value) {
+  return String(value || '').trim().replace(/^W\//i, '').replace(/^"|"$/g, '');
+}
+
+function uploadBlobWithProgress(url, blob, onProgress) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('PUT', url);
+    xhr.upload.onprogress = e => {
+      if (e.lengthComputable && typeof onProgress === 'function') onProgress(e.loaded, e.total);
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(normalizeETag(xhr.getResponseHeader('ETag') || ''));
+      } else {
+        reject(new Error(`Upload failed to R2: HTTP ${xhr.status}`));
+      }
+    };
+    xhr.onerror = () => reject(new Error(_t('netErr')));
+    xhr.send(blob);
+  });
+}
+
+async function uploadMultipart(item, prepareData, missingParts = null) {
+  const totalParts = Number(prepareData.totalParts || prepareData.parts.length || 0);
+  const partsToUpload = missingParts 
+    ? prepareData.parts.filter(p => missingParts.includes(p.partNumber))
+    : prepareData.parts;
+  const totalBytes = partsToUpload.reduce((sum, part) => {
+    const start = (part.partNumber - 1) * prepareData.partSize;
+    const end = Math.min(start + prepareData.partSize, item.file.size);
+    return sum + Math.max(end - start, 0);
+  }, 0);
+  const loadedBytesByPart = new Map();
+  const progressStart = missingParts ? 90 : 0;
+  const progressSpan = missingParts ? 5 : 95;
+  let nextIndex = 0;
+  const uploadedPartEtags = [];
+
+  function syncMultipartProgress() {
+    const loadedBytes = Array.from(loadedBytesByPart.values()).reduce((sum, value) => sum + value, 0);
+    const ratio = totalBytes > 0 ? Math.min(loadedBytes / totalBytes, 1) : 1;
+    updateItemProgress(item, Math.round(progressStart + progressSpan * ratio));
+  }
+
+  async function uploadPart(part) {
+    const start = (part.partNumber - 1) * prepareData.partSize;
+    const end = Math.min(start + prepareData.partSize, item.file.size);
+    const chunk = item.file.slice(start, end);
+    loadedBytesByPart.set(part.partNumber, 0);
+    syncMultipartProgress();
+    const etag = await uploadBlobWithProgress(part.uploadUrl, chunk, (loaded) => {
+      loadedBytesByPart.set(part.partNumber, loaded);
+      syncMultipartProgress();
+    });
+    loadedBytesByPart.set(part.partNumber, chunk.size);
+    syncMultipartProgress();
+    const uploaded = { partNumber: part.partNumber, etag: normalizeETag(etag) };
+    uploadedPartEtags.push(uploaded);
+    return uploaded;
+  }
+
+  async function worker() {
+    while (nextIndex < partsToUpload.length) {
+      const part = partsToUpload[nextIndex++];
+      await uploadPart(part);
+    }
+  }
+
+  const concurrency = Math.max(1, Math.min(MULTIPART_UPLOAD_CONCURRENCY, partsToUpload.length));
+  await Promise.all(Array.from({ length: concurrency }, () => worker()));
+  const existing = new Map(((item.multipartEtags || []).map((entry) => [entry.partNumber, entry])));
+  uploadedPartEtags.forEach((entry) => existing.set(entry.partNumber, entry));
+  item.multipartEtags = Array.from(existing.values()).sort((a, b) => a.partNumber - b.partNumber);
+  if (!missingParts) updateItemProgress(item, Math.max(item.progress, 95));
+  return item.multipartEtags;
+}
+
+async function uploadAll() {
+  if (!pendingFiles.length) return;
+  if (batchMode === 'site') {
+    return uploadSiteBatch();
+  }
+  upBtn.disabled = true;
+  upBtn.innerHTML = _t('uploading');
+
+  const CONCURRENCY = 3;
+  const queue = [...pendingFiles.filter(f => f.status !== 'done' && f.status !== 'error')];
+  let idx = 0;
+  let active = 0;
+
+  async function processNext() {
+    while (idx < queue.length && active < CONCURRENCY) {
+      const item = queue[idx++];
+      if (item.status === 'done' || item.status === 'error') continue;
+      active++;
+      await uploadOne(item);
+      active--;
+    }
+  }
+
+  const workers = [];
+  for (let i = 0; i < CONCURRENCY && i < queue.length; i++) {
+    workers.push(processNext());
+  }
+  await Promise.all(workers);
+
+  upBtn.disabled = false;
+  applyLangToJS();
+  showResults();
+}
+
+function guessSiteName(items) {
+  const prepared = prepareSiteBatch(items);
+  if (prepared.sharedRoot) return prepared.sharedRoot;
+  const first = (prepared.items[0] && prepared.items[0].relativePath) ? prepared.items[0].relativePath.split('/')[0] : '';
+  return first || 'site';
+}
+
+function detectCommonTopLevelDir(paths) {
+  const normalized = (paths || []).filter(path => typeof path === 'string' && path);
+  if (!normalized.length) return '';
+  const firstSegments = normalized.map(path => path.split('/')[0]).filter(Boolean);
+  const sharedRoot = firstSegments[0] || '';
+  if (!sharedRoot) return '';
+  if (!firstSegments.every(segment => segment === sharedRoot)) return '';
+  if (!normalized.every(path => path.startsWith(sharedRoot + '/'))) return '';
+  return sharedRoot;
+}
+
+function prepareSiteBatch(items) {
+  const normalized = (items || []).map(item => ({
+    item,
+    relativePath: item.relativePath || item.file.name
+  }));
+  const sharedRoot = detectCommonTopLevelDir(normalized.map(entry => entry.relativePath));
+  return {
+    sharedRoot,
+    items: normalized.map(entry => ({
+      item: entry.item,
+      relativePath: sharedRoot ? entry.relativePath.slice(sharedRoot.length + 1) : entry.relativePath
+    }))
+  };
+}
+
+function guessSiteEntryPath(items) {
+  const paths = prepareSiteBatch(items).items.map(item => item.relativePath);
+  if (paths.includes('index.html')) return 'index.html';
+  return '';
+}
+
+async function uploadSiteBatch() {
+  if (!pendingFiles.length) return;
+  upBtn.disabled = true;
+  upBtn.innerHTML = _t('siteUploading');
+  siteResult = null;
+  siteUploadMeta = null;
+  renderSiteResult();
+  try {
+    const preparedSite = prepareSiteBatch(pendingFiles);
+    siteUploadMeta = {
+      sharedRoot: preparedSite.sharedRoot || '',
+      entryPath: guessSiteEntryPath(pendingFiles),
+      hasNestedPaths: preparedSite.items.some(entry => entry.relativePath.includes('/'))
+    };
+    const sitePrepareRes = await fetch(API + '/api/site/prepare', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        siteId: siteUpdateTargetId || undefined,
+        siteUpdateToken: siteUpdateToken || undefined,
+        siteName: guessSiteName(pendingFiles),
+        entryPath: guessSiteEntryPath(pendingFiles),
+        files: preparedSite.items.map(entry => ({
+          path: entry.relativePath,
+          size: entry.item.file.size,
+          contentType: entry.item.file.type || undefined
+        }))
+      })
+    });
+    const sitePrepareData = await sitePrepareRes.json().catch(() => null);
+    if (!sitePrepareRes.ok || !(sitePrepareData && sitePrepareData.success)) {
+      throw new Error((sitePrepareData && sitePrepareData.error) || `Site prepare failed: HTTP ${sitePrepareRes.status}`);
+    }
+
+    const CONCURRENCY = 3;
+    const queue = [...pendingFiles.filter(f => f.status !== 'done' && f.status !== 'error')];
+    let idx = 0;
+    let active = 0;
+
+    async function processNext() {
+      while (idx < queue.length && active < CONCURRENCY) {
+        const item = queue[idx++];
+        if (item.status === 'done' || item.status === 'error') continue;
+        active++;
+        await uploadOne(item);
+        active--;
+      }
+    }
+
+    const workers = [];
+    for (let i = 0; i < CONCURRENCY && i < queue.length; i++) {
+      workers.push(processNext());
+    }
+    await Promise.all(workers);
+
+    const failed = pendingFiles.filter(item => item.status !== 'done' || !(item.result && item.result.id));
+    if (failed.length) {
+      throw new Error(_t('siteUpdateFailed') + failed[0].relativePath);
+    }
+
+    const siteCompleteRes = await fetch(API + '/api/site/complete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        siteId: sitePrepareData.siteId,
+        siteToken: sitePrepareData.siteToken,
+        files: preparedSite.items.map(entry => ({
+          relativePath: entry.relativePath,
+          fileId: entry.item.result.id
+        }))
+      })
+    });
+    const siteCompleteData = await siteCompleteRes.json().catch(() => null);
+    if (!siteCompleteRes.ok || !(siteCompleteData && siteCompleteData.success)) {
+      throw new Error((siteCompleteData && siteCompleteData.error) || `Site complete failed: HTTP ${siteCompleteRes.status}`);
+    }
+    siteResult = siteCompleteData;
+  } catch (error) {
+    showErr(error.message || _t('uploadFail'));
+  } finally {
+    upBtn.disabled = false;
+    applyLangToJS();
+    showResults();
+  }
+}
+
+function uploadOne(item) {
+  return new Promise(async resolve => {
+    try {
+      item.status = 'uploading';
+      item.progress = 5;
+      renderFileList();
+
+      let prepareData = null;
+      if (item.file.size <= (uploadConfig.quickUploadMaxSize || 5 * 1024 * 1024)) {
+        const quickBody = new FormData();
+        quickBody.append('file', item.file, item.file.name);
+        const quickRes = await fetch(API + '/api/upload/quick', {
+          method: 'POST',
+          body: quickBody
+        });
+        const quickData = await quickRes.json().catch(() => null);
+        if (!quickRes.ok || !(quickData && quickData.success)) {
+          throw new Error((quickData && quickData.error) || `Quick upload failed: HTTP ${quickRes.status}`);
+        }
+        item.result = quickData;
+        item.status = 'done';
+        updateItemProgress(item, 100);
+        renderFileList();
+        resolve();
+        return;
+      } else {
+        const prepareRes = await fetch(API + '/api/upload/prepare', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            filename: item.file.name,
+            size: item.file.size,
+            contentType: item.file.type || undefined
+          })
+        });
+
+        prepareData = await prepareRes.json().catch(() => null);
+        if (!prepareRes.ok || !(prepareData && prepareData.success)) {
+          throw new Error((prepareData && prepareData.error) || `Upload prepare failed: HTTP ${prepareRes.status}`);
+        }
+      }
+
+      if (prepareData.mode === 'multipart') {
+        await uploadMultipart(item, prepareData);
+      } else if (prepareData.uploadUrl) {
+        item.uploadEtag = await uploadBlobWithProgress(prepareData.uploadUrl, item.file, (loaded, total) => {
+          const ratio = total > 0 ? (loaded / total) : 0;
+          updateItemProgress(item, Math.round(95 * ratio));
+        });
+        updateItemProgress(item, 95);
+      } else {
+        throw new Error(_t('noUrl'));
+      }
+
+      let completeRes = await fetch(API + '/api/upload/complete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: prepareData.id,
+          etag: item.uploadEtag || undefined,
+          parts: Array.isArray(item.multipartEtags) && item.multipartEtags.length ? item.multipartEtags : undefined
+        })
+      });
+      let completeData = await completeRes.json().catch(() => null);
+
+      let retries = 0;
+      while (!completeRes.ok && completeData && completeData.missingParts && completeData.missingParts.length > 0 && retries < 3) {
+        retries++;
+        await uploadMultipart(item, prepareData, completeData.missingParts);
+        completeRes = await fetch(API + '/api/upload/complete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: prepareData.id,
+            etag: item.uploadEtag || undefined,
+            parts: Array.isArray(item.multipartEtags) && item.multipartEtags.length ? item.multipartEtags : undefined
+          })
+        });
+        completeData = await completeRes.json().catch(() => null);
+      }
+
+      if (!completeRes.ok || !(completeData && completeData.success)) {
+        throw new Error((completeData && completeData.error) || `Confirm failed: HTTP ${completeRes.status}`);
+      }
+      item.result = completeData;
+
+      if (item.status !== 'error') {
+        item.status = 'done';
+        updateItemProgress(item, 100);
+      }
+
+      renderFileList();
+      resolve();
+
+    } catch(e) {
+      item.status = 'error';
+      showErr(e.message || `${_t('uploadFail')}: ` + item.file.name);
+      renderFileList();
+      resolve();
+    }
+  });
+}
+
+// ══════════════════════════════════════════════
+// Results Display
+// ══════════════════════════════════════════════
+function renderSiteResult() {
+  if (!siteResult) {
+    siteResultCard.classList.remove('show');
+    siteResultCard.innerHTML = '';
+    return;
+  }
+  const notes = [];
+  if (siteUploadMeta && siteUploadMeta.sharedRoot) {
+    notes.push(`<div class="site-result-note">${escHTML(_t('siteRootStripped'))}</div>`);
+  }
+  if (siteUploadMeta && !siteUploadMeta.entryPath) {
+    notes.push(`<div class="site-result-note">${escHTML(_t('siteNoIndexListing'))}</div>`);
+    notes.push(`<div class="site-result-note">${escHTML(_t('siteAutoListingHint'))}</div>`);
+  }
+  if (siteUploadMeta && siteUploadMeta.hasNestedPaths) {
+    notes.push(`<div class="site-result-note">${escHTML(_t('siteSubdirsReady'))}</div>`);
+  }
+  if (siteResult && siteResult.updateMode && siteResult.versionNo) {
+    notes.push(`<div class="site-result-note">${escHTML(_t('siteVersionSwitched').replace('{versionNo}', siteResult.versionNo))}</div>`);
+  }
+  siteResultCard.classList.add('show');
+  siteResultCard.innerHTML = `
+    <div class="site-result-title">${_t('siteReady')}</div>
+    <div class="site-result-meta">${escHTML(siteResult.siteName || siteResult.siteId || '')}</div>
+    ${notes.length ? `<div class="site-result-notes">${notes.join('')}</div>` : ''}
+    <div class="site-result-links">
+      <div>
+        <div class="link" title="${_t('siteRoot')}">${escHTML(siteResult.siteUrl)}</div>
+        <div class="link-actions">
+          <button class="cp-btn" onclick="cp('${siteResult.siteUrl}',this,'${_t('copySite')}')">${_t('copySite')}</button>
+          <button class="open-btn" onclick="window.open('${siteResult.siteUrl}','_blank')">${_t('openSite')}</button>
+        </div>
+      </div>
+      <div>
+        <div class="link" title="${_t('siteEntry')}">${escHTML(siteResult.entryUrl || siteResult.siteUrl)}</div>
+      </div>
+      ${siteResult.siteHostname ? `<div><div class="link" title="${_t('siteHost')}">${escHTML(siteResult.siteHostname)}</div></div>` : ''}
+    </div>
+  `;
+}
+
+function showResults() {
+  const done = pendingFiles.filter(f => f.status === 'done' && f.result);
+  if (!done.length && !siteResult) return;
+
+  res.classList.add('show');
+  renderSiteResult();
+
+  grid.innerHTML = done.map(item => {
+    const r = item.result;
+    const isVid = r.type === 'video';
+    const isImg = r.type === 'image';
+    const isPdf = r.type === 'pdf';
+    const tagClass = isVid ? 'vid' : 'img';
+    const tagLabel = isVid ? 'VIDEO' : (isImg ? 'IMAGE' : (isPdf ? 'PDF' : 'FILE'));
+    const directUrl = r.url;
+    const previewUrl = r.playUrl || (r.url + '?play=1');
+
+    let media;
+    if (isVid) {
+      media = `<video src="${directUrl}" preload="metadata" muted playsinline controls style="max-width:100%;max-height:160px;border-radius:6px;background:#000"></video>`;
+    } else if (isImg) {
+      media = `<img src="${directUrl}" alt="" style="max-width:100%;max-height:160px;object-fit:contain;border-radius:6px;cursor:pointer" onclick="window.open('${previewUrl}','_blank')">`;
+    } else {
+      media = `<div style="height:160px;display:flex;align-items:center;justify-content:center;color:#888;font-size:18px;background:#0a0a0a;border-radius:6px">${tagLabel}</div>`;
+    }
+
+    return `<div class="result-card">
+      <div class="thumb-wrap">${media}<span class="type-tag ${tagClass}">${tagLabel}</span></div>
+      <div class="body">
+      <div class="link" title="Direct Link">${directUrl}</div>
+      <div class="sub-link" title="Preview/Play Link">${previewUrl}</div>
+        <div class="link-actions">
+          <button class="cp-btn" onclick="cp('${directUrl}',this,'${_t('copyDirect')}')">${_t('copyDirect')}</button>
+          <button class="open-btn" onclick="window.open('${previewUrl}','_blank')">${_t('preview')}</button>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ══════════════════════════════════════════════
+// Utilities
+// ══════════════════════════════════════════════
+function cp(text, btn, resetLabel = _t('copyLink')) {
+  navigator.clipboard.writeText(text).then(() => {
+    showToast(_t('copied'));
+    if (btn) { btn.textContent = _t('copied'); setTimeout(() => btn.textContent = resetLabel, 1500); }
+  });
+}
+
+function copyAllLinks() {
+  const links = pendingFiles
+    .filter(f => f.status === 'done' && f.result)
+    .map(f => f.result.url)
+    .concat(siteResult ? [siteResult.siteUrl, siteResult.entryUrl || siteResult.siteUrl] : [])
+    .join('\n');
+  if (links) navigator.clipboard.writeText(links).then(() => showToast(_t('copyAll')));
+}
+
+function showErr(m) { err.textContent=m; err.classList.add('show'); setTimeout(()=>err.classList.remove('show'),4000); }
+function showToast(m) { ts.textContent=m; ts.classList.add('show'); setTimeout(()=>ts.classList.remove('show'),2000); }
+function escHTML(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+
+function fmtSize(b) {
+  if (b >= 1073741824) return (b/1073741824).toFixed(2)+' GB';
+  if (b >= 1048576) return (b/1048576).toFixed(2)+' MB';
+  if (b >= 1024) return (b/1024).toFixed(1)+' KB';
+  return b+' B';
+}
+
+loadUploadConfig();
+</script>
+</body>
+</html>

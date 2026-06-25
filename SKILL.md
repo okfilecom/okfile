@@ -366,7 +366,7 @@ Use the CLI when:
 - documents: `PDF`
 - other common files are handled as generic files
 ## Limits
-- max file size: `500MB`
+- max file size: `1GB`
 - quick-upload path: currently advertised by `GET /api/upload/config`, typically `<= 5MB`
 - files above threshold automatically use multipart upload
 - anonymous mode is IP rate-limited

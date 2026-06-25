@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security issue
+    url: https://github.com/okfilecom/okfile/blob/main/SECURITY.md
+    about: Please read the private reporting guidance before disclosing a security issue.
+  - name: Skill and integration docs
+    url: https://github.com/okfilecom/okfile/blob/main/SKILL.md
+    about: Check the root skill doc before opening integration questions.
+  - name: Upload pitfalls
+    url: https://github.com/okfilecom/okfile/blob/main/okfile-upload-pitfalls.md
+    about: Review common upload client pitfalls and fixes.

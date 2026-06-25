@@ -1,0 +1,15 @@
+.wrangler/
+.xdg/
+.dbg/
+node_modules/
+
+.DS_Store
+Thumbs.db
+
+.force_redeploy
+deployments*.json
+multi-prepare.json
+project-list.txt
+*.log
+tmp-site-test*/
+tmp-site-test-result.txt

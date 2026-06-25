@@ -1,0 +1,27 @@
+"$schema" = "./node_modules/wrangler/config-schema.json"
+
+name = "okfile-admin"
+main = "admin-worker.js"
+compatibility_date = "2026-05-25"
+workers_dev = true
+
+routes = [
+  { pattern = "admin.okfile.com/*", zone_name = "okfile.com" }
+]
+
+[vars]
+RESEND_FROM_EMAIL = "no-reply@okfile.com"
+ADMIN_EMAILS = "sungz@163.com"
+
+[[r2_buckets]]
+binding = "FILES"
+bucket_name = "okfile-files"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "okfile-auth"
+database_id = "0fcf12da-a653-4dee-ad50-04e097ec1c66"
+
+# Optional: enable automatic cleanup after the first admin deployment is verified.
+#[triggers]
+#crons = ["*/30 * * * *"]

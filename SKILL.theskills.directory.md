@@ -81,7 +81,7 @@ curl -X POST "https://www.okfile.com/api/site/complete" \
 - use site-relative paths like `assets/app.css`, not local absolute paths
 - do not generate a synthetic `index.html` just to list files; if the real folder has no root `index.html`, let OkFile render the listing automatically
 - preserve nested subdirectories exactly as uploaded
-- max file size is `500MB`
+- max file size is `1GB`
 ## Useful URLs
 - home: `https://www.okfile.com/en/`
 - upload page: `https://www.okfile.com/en/upload/`

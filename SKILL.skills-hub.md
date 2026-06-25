@@ -75,7 +75,7 @@ curl -X POST "https://www.okfile.com/api/site/prepare" \
   --data '{"siteName":"docs-site","files":[{"path":"docs/getting-started.md","size":1200,"contentType":"text/markdown; charset=utf-8"},{"path":"assets/app.css","size":3200,"contentType":"text/css; charset=utf-8"},{"path":"images/logo.png","size":4200,"contentType":"image/png"}]}'
 ```
 ## Tell The User About These Limits
-- max file size: `500MB`
+- max file size: `1GB`
 - anonymous mode is IP rate-limited
 - API key mode is controlled by backend quotas
 - multipart retry should target only `missingParts`

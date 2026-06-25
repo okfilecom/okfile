@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "okfile": {
+      "source": "okfilecom/okfile",
+      "sourceType": "github",
+      "skillPath": "SKILL.md",
+      "computedHash": "61f8d4c5eaf988febfee5ea0df6a2a2ff071a40fc3f58205cc425ba0b06062c6"
+    }
+  }
+}

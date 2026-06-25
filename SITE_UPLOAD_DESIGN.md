@@ -9,7 +9,7 @@ Current capability includes:
 - anonymous file upload
 - API Key authenticated upload
 - direct file URLs, preview URLs, and controlled download URLs
-- multipart upload for large files up to `500MB`
+- multipart upload for large files up to `1GB`
 - retrying missing multipart parts
 - email magic-link login
 - account page and API Key management
@@ -345,7 +345,7 @@ Later phases can expose manual entry file selection.
 
 ### Existing File Limits
 
-- max single file size: `500MB`
+- max single file size: `1GB`
 - multipart threshold: `25MB`
 - default part size: `10MB`
 

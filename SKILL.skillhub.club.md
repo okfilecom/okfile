@@ -80,7 +80,7 @@ curl -X POST "https://www.okfile.com/api/upload/complete" \
 - `POST /api/site/prepare`
 - `POST /api/site/complete`
 ## Limits
-- max file size: `500MB`
+- max file size: `1GB`
 - multipart starts automatically above the backend threshold
 - anonymous mode is IP rate-limited
 - API key mode is controlled by backend quotas

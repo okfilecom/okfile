@@ -1,6 +1,6 @@
 import { AwsClient } from 'aws4fetch';
 
-const MAX_SIZE = 500 * 1024 * 1024;
+const MAX_SIZE = 1024 * 1024 * 1024;
 const MULTIPART_THRESHOLD = 25 * 1024 * 1024;
 const PART_SIZE = 10 * 1024 * 1024;
 const MIN_MULTIPART_PART_SIZE = 5 * 1024 * 1024;
@@ -25,6 +25,8 @@ const UPLOAD_NOTIFY_TO_EMAIL = 'sungz@163.com';
 const UPLOAD_NOTIFY_DAILY_LIMIT = 10;
 const UPLOAD_NOTIFY_SUBJECT_PREFIX = 'OkFile New Upload';
 const EXPIRED_CLEANUP_BATCH_LIMIT = 200;
+const INCOMPLETE_UPLOAD_CLEANUP_BATCH_LIMIT = 200;
+const INCOMPLETE_UPLOAD_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const ADMIN_PANEL_ORIGIN = 'https://admin.okfile.com';
 const AUTH_PUBLIC_ORIGIN = 'https://www.okfile.com';
 const PUBLISH_DOMAIN_SETTING_KEY = 'publish_origin';
@@ -180,7 +182,7 @@ function pageSeoConfig(lang, pageType) {
   }
   return {
     title: 'OkFile - Agent-First File Upload and Publish Service',
-    description: 'OkFile provides agent-first file upload and publish APIs with anonymous access, API keys, direct links, preview URLs, multipart uploads up to 500MB, and static site folder publishing to dedicated subdomains.',
+    description: 'OkFile provides agent-first file upload and publish APIs with anonymous access, API keys, direct links, preview URLs, multipart uploads up to 1GB, and static site folder publishing to dedicated subdomains.',
     robots: 'index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1'
   };
 }
@@ -1028,6 +1030,7 @@ td input,td select{width:100%;padding:8px 10px;border-radius:8px;border:1px soli
 .status-pill{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;font-size:12px;font-weight:600;border:1px solid transparent}
 .status-pill.active{background:#ecfdf3;color:#166534;border-color:#bbf7d0}
 .status-pill.disabled{background:#f8fafc;color:#475569;border-color:#e2e8f0}
+.status-pill.expired{background:#fff1f2;color:#b91c1c;border-color:#fecdd3}
 .perm-summary{max-width:360px}
 .perm-summary strong{display:block;color:#334155;margin-bottom:4px}
 .subtle{font-size:12px;color:#64748b;line-height:1.55}
@@ -1225,6 +1228,18 @@ function accountContentForPage(page, copy, lang) {
 
   if (page.key === 'files') {
     return `<div class="card section-card">
+      <div class="table-toolbar">
+        <div class="toolbar-copy subtle" id="fileSelectionSummary">${copy.fileSelectionSummaryNone}</div>
+        <div class="section-actions">
+          <select id="fileExpiryFilter" aria-label="${copy.fileExpiryFilterLabel}">
+            <option value="all" selected>${copy.fileExpiryAll}</option>
+            <option value="active">${copy.fileExpiryActive}</option>
+            <option value="expired">${copy.fileExpiryExpired}</option>
+          </select>
+          <button class="btn-danger" id="deleteSelectedFilesBtn" type="button">${copy.deleteSelectedFiles}</button>
+          <button class="btn-danger" id="deleteAllFilesBtn" type="button">${copy.deleteAllFiles}</button>
+        </div>
+      </div>
       <div class="table-wrap" id="fileList"><div class="empty-state"><strong>Loading files...</strong><div>Please wait while OkFile loads your uploaded file records.</div></div></div>
     </div>`;
   }
@@ -1405,14 +1420,33 @@ function accountPage(lang = 'en', pageKey = 'overview', session = null, initialA
     openFile: 'Open',
     downloadFile: 'Download',
     openSite: 'Open Site',
+    selectAllFiles: 'Select all files',
     deleteFile: 'Delete File',
+    deleteSelectedFiles: 'Delete Selected',
+    deleteAllFiles: 'Delete All Files',
     deleteSite: 'Delete Site',
     deleteFileConfirm: 'Delete this file? Its public links will stop working immediately.',
+    deleteSelectedFilesConfirm: 'Delete {count} selected files? Their public links will stop working immediately.',
+    deleteAllFilesConfirm: 'Delete all files in this account? Every public file link will stop working immediately.',
     deleteSiteConfirm: 'Delete this site? Its hostname and published content will stop working immediately.',
     deleteFileSuccess: 'File deleted.',
+    deleteSelectedFilesSuccess: 'Selected files deleted.',
+    deleteAllFilesSuccess: 'All files deleted.',
     deleteSiteSuccess: 'Site deleted.',
     deleteFileBusy: 'Deleting file...',
+    deleteSelectedFilesBusy: 'Deleting selected files...',
+    deleteAllFilesBusy: 'Deleting all files...',
     deleteSiteBusy: 'Deleting site...',
+    fileSelectionSummaryNone: 'No files selected.',
+    fileSelectionSummaryCount: '{count} files selected.',
+    fileExpiryFilterLabel: 'Expiration Filter',
+    fileExpiryAll: 'All files',
+    fileExpiryActive: 'Active only',
+    fileExpiryExpired: 'Expired only',
+    fileExpiresHeader: 'Expires / Status',
+    fileExpiresNever: 'Never',
+    fileExpiresActive: 'Active',
+    fileExpiresExpired: 'Expired',
     fileStorage: 'File Storage',
     siteStorage: 'Site Storage',
     accountRole: 'Role',
@@ -1532,14 +1566,33 @@ const i18n=${JSON.stringify({
       openFile: copy.openFile,
       downloadFile: copy.downloadFile,
       openSite: copy.openSite,
+      selectAllFiles: copy.selectAllFiles,
       deleteFile: copy.deleteFile,
+      deleteSelectedFiles: copy.deleteSelectedFiles,
+      deleteAllFiles: copy.deleteAllFiles,
       deleteSite: copy.deleteSite,
       deleteFileConfirm: copy.deleteFileConfirm,
+      deleteSelectedFilesConfirm: copy.deleteSelectedFilesConfirm,
+      deleteAllFilesConfirm: copy.deleteAllFilesConfirm,
       deleteSiteConfirm: copy.deleteSiteConfirm,
       deleteFileSuccess: copy.deleteFileSuccess,
+      deleteSelectedFilesSuccess: copy.deleteSelectedFilesSuccess,
+      deleteAllFilesSuccess: copy.deleteAllFilesSuccess,
       deleteSiteSuccess: copy.deleteSiteSuccess,
       deleteFileBusy: copy.deleteFileBusy,
+      deleteSelectedFilesBusy: copy.deleteSelectedFilesBusy,
+      deleteAllFilesBusy: copy.deleteAllFilesBusy,
       deleteSiteBusy: copy.deleteSiteBusy,
+      fileSelectionSummaryNone: copy.fileSelectionSummaryNone,
+      fileSelectionSummaryCount: copy.fileSelectionSummaryCount,
+      fileExpiryFilterLabel: copy.fileExpiryFilterLabel,
+      fileExpiryAll: copy.fileExpiryAll,
+      fileExpiryActive: copy.fileExpiryActive,
+      fileExpiryExpired: copy.fileExpiryExpired,
+      fileExpiresHeader: copy.fileExpiresHeader,
+      fileExpiresNever: copy.fileExpiresNever,
+      fileExpiresActive: copy.fileExpiresActive,
+      fileExpiresExpired: copy.fileExpiresExpired,
       fileStorage: copy.fileStorage,
       siteStorage: copy.siteStorage,
       accountRole: copy.accountRole,
@@ -1558,10 +1611,36 @@ const topAccountChip=$('topAccountChip'),sidebarWorkspaceLabel=$('sidebarWorkspa
 const accountMsg=$('accountMsg'),accountErr=$('accountErr');
 const newKeyBox=$('newKeyBox'),newKeyCallout=$('newKeyCallout');
 const createKeyPanel=$('createKeyPanel'),openCreateKeyBtn=$('openCreateKeyBtn'),cancelCreateKeyBtn=$('cancelCreateKeyBtn');
+const fileSelectionSummary=$('fileSelectionSummary');
+const fileExpiryFilter=$('fileExpiryFilter');
+const deleteSelectedFilesBtn=$('deleteSelectedFilesBtn');
+const deleteAllFilesBtn=$('deleteAllFilesBtn');
 let initialAccountDataUsed = false;
 let latestCreatedApiKey = '';
+let currentFileIds = [];
+let currentFileExpiryFilter = 'all';
+const selectedFileIds = new Set();
 function show(el,msg){ if(!el) return; el.textContent=msg; el.classList.remove('hidden'); }
 function hide(el){ if(!el) return; el.textContent=''; el.classList.add('hidden'); }
+function syncFileSelectionUI(){
+  const currentIdSet = new Set(currentFileIds);
+  Array.from(selectedFileIds).forEach((id)=>{
+    if(!currentIdSet.has(id)) selectedFileIds.delete(id);
+  });
+  const selectedCount = selectedFileIds.size;
+  if(fileSelectionSummary){
+    fileSelectionSummary.textContent = selectedCount
+      ? i18n.fileSelectionSummaryCount.replace('{count}', String(selectedCount))
+      : i18n.fileSelectionSummaryNone;
+  }
+  if(deleteSelectedFilesBtn) deleteSelectedFilesBtn.disabled = selectedCount === 0;
+  if(deleteAllFilesBtn) deleteAllFilesBtn.disabled = currentFileIds.length === 0;
+  const masterCheckbox = document.querySelector('[data-select-all-files]');
+  if(masterCheckbox){
+    masterCheckbox.checked = currentFileIds.length > 0 && selectedCount === currentFileIds.length;
+    masterCheckbox.indeterminate = selectedCount > 0 && selectedCount < currentFileIds.length;
+  }
+}
 function syncNewKeyCallout(){
   if(!newKeyCallout || !newKeyBox) return;
   if(latestCreatedApiKey){
@@ -1853,11 +1932,13 @@ function syncAccountActionMenuDirection(menu){
 function renderFiles(files){
   const el = $('fileList');
   if(!el) return;
+  currentFileIds = files.map((item)=>String(item.id || '')).filter(Boolean);
+  syncFileSelectionUI();
   if(!files.length){
     el.innerHTML = '<div class="empty-state"><strong>' + i18n.filesEmpty + '</strong><div>Upload a file from the browser or API and it will appear here.</div></div>';
     return;
   }
-  el.innerHTML = '<table><thead><tr><th>File</th><th>Type</th><th>Size</th><th>Published / Source</th><th>Actions</th></tr></thead><tbody>' + files.map((item)=>{
+  el.innerHTML = '<table><thead><tr><th><input type="checkbox" data-select-all-files aria-label="' + escapeHtml(i18n.selectAllFiles) + '"></th><th>File</th><th>Type</th><th>Size</th><th>Published / Source</th><th>' + escapeHtml(i18n.fileExpiresHeader) + '</th><th>Actions</th></tr></thead><tbody>' + files.map((item)=>{
     const sourceParts = [];
     if (item.clientIp) sourceParts.push('IP ' + item.clientIp);
     if (item.clientRegion) sourceParts.push('Region ' + item.clientRegion);
@@ -1865,14 +1946,22 @@ function renderFiles(files){
     const fileTitle = item.viewUrl
       ? '<a href="' + escapeHtml(item.viewUrl) + '" target="_blank" rel="noopener"><strong>' + escapeHtml(fileLabel) + '</strong></a>'
       : '<strong>' + escapeHtml(fileLabel) + '</strong>';
+    const checkedAttr = selectedFileIds.has(String(item.id || '')) ? ' checked' : '';
+    const isExpired = item.expiresAt && new Date(item.expiresAt).getTime() <= Date.now();
+    const expiresLabel = item.expiresAt ? formatDate(item.expiresAt) : i18n.fileExpiresNever;
+    const expiresClass = isExpired ? 'expired' : 'active';
+    const expiresStatus = isExpired ? i18n.fileExpiresExpired : i18n.fileExpiresActive;
     return '<tr>' +
+      '<td><input type="checkbox" data-select-file="' + escapeHtml(item.id) + '" aria-label="Select ' + escapeHtml(fileLabel) + '"' + checkedAttr + '></td>' +
       '<td><div class="cell-stack">' + fileTitle + '<div class="subtle mono">' + escapeHtml(item.id) + '</div></div></td>' +
       '<td>' + escapeHtml(item.contentType || '-') + '</td>' +
       '<td>' + escapeHtml(formatSize(item.size)) + '</td>' +
       '<td><div class="cell-stack"><div>' + escapeHtml(formatDate(item.createdAt)) + '</div><div class="subtle">' + escapeHtml(sourceParts.join(' | ') || '-') + '</div></div></td>' +
+      '<td><div class="cell-stack"><div class="' + (isExpired ? 'subtle' : '') + '"' + (isExpired ? ' style="color:#b91c1c;font-weight:600"' : '') + '>' + escapeHtml(expiresLabel) + '</div><div><span class="status-pill ' + expiresClass + '">' + escapeHtml(expiresStatus) + '</span></div></div></td>' +
       '<td>' + renderFileActionsMenu(item) + '</td>' +
     '</tr>';
   }).join('') + '</tbody></table>';
+  syncFileSelectionUI();
 }
 function renderSites(sites){
   const el = $('siteList');
@@ -1954,13 +2043,105 @@ document.addEventListener('click',(event)=>{
     })();
     return;
   }
+  const bulkDeleteBtn = event.target.closest('#deleteAllFilesBtn');
+  if(bulkDeleteBtn){
+    event.preventDefault();
+    closeAccountActionMenus();
+    (async ()=>{
+      if(!confirm(i18n.deleteAllFilesConfirm)) return;
+      hide(accountMsg); hide(accountErr);
+      const originalText = bulkDeleteBtn.textContent;
+      bulkDeleteBtn.disabled = true;
+      bulkDeleteBtn.textContent = i18n.deleteAllFilesBusy;
+      try{
+        await api('/api/account/files',{method:'DELETE'});
+        show(accountMsg,i18n.deleteAllFilesSuccess);
+        await loadMe();
+      }catch(error){
+        show(accountErr,error.message);
+      }finally{
+        bulkDeleteBtn.disabled = false;
+        bulkDeleteBtn.textContent = originalText;
+      }
+    })();
+    return;
+  }
+  const selectedDeleteBtn = event.target.closest('#deleteSelectedFilesBtn');
+  if(selectedDeleteBtn){
+    event.preventDefault();
+    closeAccountActionMenus();
+    (async ()=>{
+      const ids = currentFileIds.filter((id)=>selectedFileIds.has(id));
+      if(!ids.length) return;
+      if(!confirm(i18n.deleteSelectedFilesConfirm.replace('{count}', String(ids.length)))) return;
+      hide(accountMsg); hide(accountErr);
+      const originalText = selectedDeleteBtn.textContent;
+      selectedDeleteBtn.disabled = true;
+      selectedDeleteBtn.textContent = i18n.deleteSelectedFilesBusy;
+      try{
+        await api('/api/account/files/delete-selected',{
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({ids})
+        });
+        ids.forEach((id)=>selectedFileIds.delete(id));
+        show(accountMsg,i18n.deleteSelectedFilesSuccess);
+        await loadMe();
+      }catch(error){
+        show(accountErr,error.message);
+      }finally{
+        selectedDeleteBtn.disabled = false;
+        selectedDeleteBtn.textContent = originalText;
+      }
+    })();
+    return;
+  }
   if(!event.target.closest('[data-account-actions]')){
     closeAccountActionMenus();
   }
 });
+document.addEventListener('change',(event)=>{
+  const expiryFilter = event.target.closest('#fileExpiryFilter');
+  if(expiryFilter){
+    currentFileExpiryFilter = String(expiryFilter.value || 'all');
+    loadFiles();
+    return;
+  }
+  const selectAll = event.target.closest('[data-select-all-files]');
+  if(selectAll){
+    if(selectAll.checked){
+      currentFileIds.forEach((id)=>selectedFileIds.add(id));
+    }else{
+      currentFileIds.forEach((id)=>selectedFileIds.delete(id));
+    }
+    document.querySelectorAll('[data-select-file]').forEach((input)=>{
+      input.checked = selectAll.checked;
+    });
+    syncFileSelectionUI();
+    return;
+  }
+  const selectOne = event.target.closest('[data-select-file]');
+  if(selectOne){
+    const fileId = String(selectOne.getAttribute('data-select-file') || '').trim();
+    if(!fileId) return;
+    if(selectOne.checked){
+      selectedFileIds.add(fileId);
+    }else{
+      selectedFileIds.delete(fileId);
+    }
+    syncFileSelectionUI();
+  }
+});
 async function loadFiles(){
   try{
-    const data = await api('/api/account/files');
+    const data = await api('/api/account/files' + (() => {
+      const qs = new URLSearchParams();
+      if(currentFileExpiryFilter && currentFileExpiryFilter !== 'all') qs.set('expired', currentFileExpiryFilter);
+      const text = qs.toString();
+      return text ? ('?' + text) : '';
+    })());
+    currentFileExpiryFilter = String(data.meta?.expired || currentFileExpiryFilter || 'all');
+    if(fileExpiryFilter) fileExpiryFilter.value = currentFileExpiryFilter;
     renderFiles(data.files || []);
   }catch(error){
     const el = $('fileList');
@@ -2054,7 +2235,7 @@ function adminPage() {
         <div class="hero-top">
           <div class="hero-copy">
             <h1>Admin Console</h1>
-            <p class="muted">Review registered users, manage API Key status and quotas, and run cleanup for expired files. This page follows the same control-plane layout as the account key manager, with summary cards, direct actions, and a management table.</p>
+            <p class="muted">Review registered users, manage API Key status and quotas, and run cleanup for expired files or incomplete uploads. This page follows the same control-plane layout as the account key manager, with summary cards, direct actions, and a management table.</p>
             <div class="meta-line">
               <span class="meta-pill">Admin access required</span>
               <span class="meta-pill">Configured by <code>ADMIN_EMAILS</code></span>
@@ -2099,6 +2280,29 @@ function adminPage() {
             <button class="btn-primary" id="cleanupBtn">Clean Up Expired Files</button>
           </div>
           <div class="note" id="cleanupResult" style="margin-top:16px">Cleanup has not run yet</div>
+        </div>
+      </div>
+
+      <div class="card section-card">
+        <div class="section-head">
+          <div>
+            <h2>Incomplete Upload Cleanup</h2>
+            <p class="muted">Delete stale upload sessions that were prepared and partially or fully uploaded to R2 but never finalized with complete. Multipart uploads older than the selected age are aborted.</p>
+          </div>
+        </div>
+        <div class="section-body">
+          <div class="inline-grid">
+            <div class="field" style="margin-top:0">
+              <label for="incompleteCleanupLimit">Batch size</label>
+              <input id="incompleteCleanupLimit" type="number" min="1" max="1000" value="200">
+            </div>
+            <div class="field" style="margin-top:0">
+              <label for="incompleteCleanupAgeHours">Older than (hours)</label>
+              <input id="incompleteCleanupAgeHours" type="number" min="1" max="720" value="24">
+            </div>
+            <button class="btn-primary" id="incompleteCleanupBtn">Clean Up Incomplete Uploads</button>
+          </div>
+          <div class="note" id="incompleteCleanupResult" style="margin-top:16px">Incomplete upload cleanup has not run yet</div>
         </div>
       </div>
 
@@ -2156,6 +2360,10 @@ function setCleanupBusy(busy){
   $('cleanupBtn').disabled = busy;
   $('cleanupBtn').textContent = busy ? 'Cleaning...' : 'Clean Up Expired Files';
 }
+function setIncompleteCleanupBusy(busy){
+  $('incompleteCleanupBtn').disabled = busy;
+  $('incompleteCleanupBtn').textContent = busy ? 'Cleaning...' : 'Clean Up Incomplete Uploads';
+}
 async function runCleanup(){
   hide($('adminErr')); hide($('adminMsg'));
   const rawLimit = Number($('cleanupLimit').value || 200);
@@ -2178,6 +2386,41 @@ async function runCleanup(){
     show($('adminErr'),error.message);
   }finally{
     setCleanupBusy(false);
+  }
+}
+async function runIncompleteCleanup(){
+  hide($('adminErr')); hide($('adminMsg'));
+  const rawLimit = Number($('incompleteCleanupLimit').value || 200);
+  const rawAgeHours = Number($('incompleteCleanupAgeHours').value || 24);
+  const limit = Math.max(1, Math.min(rawLimit, 1000));
+  const maxAgeHours = Math.max(1, Math.min(rawAgeHours, 720));
+  $('incompleteCleanupLimit').value = String(limit);
+  $('incompleteCleanupAgeHours').value = String(maxAgeHours);
+  setIncompleteCleanupBusy(true);
+  $('incompleteCleanupResult').textContent = 'Running cleanup...';
+  try{
+    const data = await api('/api/admin/cleanup-incomplete',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({limit,maxAgeHours})
+    });
+    const parts = [
+      'Checked ' + data.checked,
+      'deleted objects ' + data.deletedObjects,
+      'deleted sessions ' + data.deletedSessions,
+      'aborted multipart ' + data.abortedMultipart
+    ];
+    if(data.skippedRecent) parts.push('skipped recent ' + data.skippedRecent);
+    if(data.skippedPublished) parts.push('removed stale published sessions ' + data.skippedPublished);
+    if(data.errors && data.errors.length) parts.push('errors ' + data.errors.length);
+    if(data.truncated) parts.push('more batches remain');
+    $('incompleteCleanupResult').textContent = parts.join(', ');
+    show($('adminMsg'),'Incomplete upload cleanup completed');
+  }catch(error){
+    $('incompleteCleanupResult').textContent = 'Cleanup failed';
+    show($('adminErr'),error.message);
+  }finally{
+    setIncompleteCleanupBusy(false);
   }
 }
 function row(item){
@@ -2241,6 +2484,7 @@ async function load(){
   }
 }
 $('cleanupBtn').onclick = runCleanup;
+$('incompleteCleanupBtn').onclick = runIncompleteCleanup;
 load();`
   );
 }
@@ -2870,6 +3114,17 @@ async function getAccountSummary(userId, env) {
   };
 }
 
+function normalizeAccountFileExpiryFilter(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  return normalized === 'active' || normalized === 'expired' ? normalized : 'all';
+}
+
+function matchesAccountFileExpiryFilter(item, expiredFilter) {
+  if (expiredFilter === 'all') return true;
+  const expired = typeof item?.expiresAt === 'string' && isExpiredAt(item.expiresAt);
+  return expiredFilter === 'expired' ? expired : !expired;
+}
+
 async function listFilesForUser(userId, env, limit = 100) {
   await ensureAccountDataIndexes(env);
   await ensurePublishedFilesTable(env);
@@ -2880,18 +3135,23 @@ async function listFilesForUser(userId, env, limit = 100) {
      ORDER BY created_at DESC
      LIMIT ?`
   ).bind(userId, limit).all();
-  return (result.results || []).map((item) => ({
-    id: item.id,
-    fileName: item.file_name || item.id,
-    contentType: item.content_type || '',
-    size: Number(item.size || 0),
-    publishOrigin: item.publish_origin || '',
-    viewUrl: item.view_url || '',
-    downloadUrl: item.download_url || '',
-    playUrl: item.play_url || '',
-    clientIp: item.client_ip || '',
-    clientRegion: item.client_region || '',
-    createdAt: item.created_at || null
+  return Promise.all((result.results || []).map(async (item) => {
+    const sidecar = await readSidecarMeta(item.id, env);
+    const expiresAt = normalizeExpiresAt(sidecar?.expiresAt);
+    return {
+      id: item.id,
+      fileName: item.file_name || item.id,
+      contentType: item.content_type || '',
+      size: Number(item.size || 0),
+      publishOrigin: item.publish_origin || '',
+      viewUrl: item.view_url || '',
+      downloadUrl: item.download_url || '',
+      playUrl: item.play_url || '',
+      clientIp: item.client_ip || '',
+      clientRegion: item.client_region || '',
+      createdAt: item.created_at || null,
+      expiresAt: typeof expiresAt === 'string' ? expiresAt : null
+    };
   }));
 }
 
@@ -4486,6 +4746,11 @@ function parseMetaIdFromKey(key) {
   return match ? match[1] : null;
 }
 
+function parseUploadSessionIdFromKey(key) {
+  const match = new RegExp(`^${SESSION_PREFIX.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([a-zA-Z0-9]+)\\.json$`).exec(String(key || ''));
+  return match ? match[1] : null;
+}
+
 async function deleteFileAndMeta(id, env) {
   await env.FILES.delete(id);
   await env.FILES.delete(metaKey(id));
@@ -4519,6 +4784,97 @@ async function cleanupExpiredFiles(env, options = {}) {
     deletedIds,
     truncated: Boolean(listed.truncated),
     cursor: listed.cursor || null
+  };
+}
+
+async function cleanupIncompleteUploads(env, options = {}) {
+  const limit = Math.max(1, Math.min(Number(options.limit || INCOMPLETE_UPLOAD_CLEANUP_BATCH_LIMIT), 1000));
+  const maxAgeMs = Math.max(Number(options.maxAgeMs || INCOMPLETE_UPLOAD_MAX_AGE_MS), 60 * 1000);
+  const listed = await env.FILES.list({ prefix: SESSION_PREFIX, limit });
+  const now = Date.now();
+  let checked = 0;
+  let deletedObjects = 0;
+  let deletedSessions = 0;
+  let abortedMultipart = 0;
+  let skippedRecent = 0;
+  let skippedPublished = 0;
+  const deletedIds = [];
+  const errors = [];
+
+  for (const object of listed.objects || []) {
+    checked += 1;
+    const id = parseUploadSessionIdFromKey(object.key);
+    if (!id) continue;
+    const session = await readUploadSession(id, env);
+    if (!session) {
+      await deleteUploadSession(id, env);
+      deletedSessions += 1;
+      continue;
+    }
+
+    const createdAtMs = new Date(session.createdAt || object.uploaded || object.httpEtag || 0).getTime();
+    if (!Number.isFinite(createdAtMs) || now - createdAtMs < maxAgeMs) {
+      skippedRecent += 1;
+      continue;
+    }
+
+    const sidecar = await readSidecarMeta(id, env);
+    if (sidecar) {
+      await deleteUploadSession(id, env);
+      deletedSessions += 1;
+      skippedPublished += 1;
+      continue;
+    }
+
+    try {
+      if (session.mode === 'multipart' && session.uploadId) {
+        try {
+          const multipart = env.FILES.resumeMultipartUpload(id, session.uploadId);
+          if (multipart && typeof multipart.abort === 'function') {
+            await multipart.abort();
+            abortedMultipart += 1;
+          }
+        } catch (error) {
+          const message = String(error?.message || error || '');
+          if (!/No such upload|upload.*not found|already completed/i.test(message)) {
+            throw error;
+          }
+        }
+        try {
+          await env.FILES.delete(id);
+          deletedObjects += 1;
+        } catch {}
+      } else {
+        const head = await env.FILES.head(id);
+        if (head) {
+          await env.FILES.delete(id);
+          deletedObjects += 1;
+        }
+      }
+      await deleteUploadSession(id, env);
+      deletedSessions += 1;
+      deletedIds.push(id);
+    } catch (error) {
+      errors.push({
+        id,
+        error: String(error?.message || error || 'Unknown cleanup error')
+      });
+    }
+  }
+
+  return {
+    success: true,
+    checked,
+    deletedObjects,
+    deletedSessions,
+    abortedMultipart,
+    skippedRecent,
+    skippedPublished,
+    deletedIds,
+    errors,
+    truncated: Boolean(listed.truncated),
+    cursor: listed.cursor || null,
+    maxAgeMs
   };
 }
 
@@ -4746,9 +5102,12 @@ async function handleAccountMe(request, env) {
 async function handleAccountFiles(request, env) {
   const session = await getSessionFromRequest(request, env);
   if (!session) return json({ error: 'Please sign in first' }, 401);
+  const expired = normalizeAccountFileExpiryFilter(new URL(request.url).searchParams.get('expired'));
+  const files = await listFilesForUser(session.userId, env);
   return json({
     success: true,
-    files: await listFilesForUser(session.userId, env)
+    files: files.filter((item) => matchesAccountFileExpiryFilter(item, expired)),
+    meta: { expired }
   });
 }
 
@@ -4777,6 +5136,82 @@ async function handleDeleteAccountFile(request, fileId, env) {
     deleted: true,
     fileId,
     fileName: existing.file_name || fileId
+  });
+}
+
+async function handleDeleteAllAccountFiles(request, env) {
+  const session = await getSessionFromRequest(request, env);
+  if (!session) return json({ error: 'Please sign in first' }, 401);
+  await ensurePublishedFilesTable(env);
+  const result = await env.DB.prepare(
+    `SELECT id, file_name
+     FROM published_files
+     WHERE user_id = ?
+     ORDER BY created_at DESC`
+  ).bind(session.userId).all();
+  const files = (result.results || []).map((item) => ({
+    id: String(item.id || ''),
+    fileName: String(item.file_name || item.id || '')
+  })).filter((item) => item.id);
+  for (const file of files) {
+    await deleteFileAndMeta(file.id, env);
+  }
+  return json({
+    success: true,
+    deleted: true,
+    deletedCount: files.length,
+    deletedIds: files.map((item) => item.id),
+    deletedFiles: files
+  });
+}
+
+async function handleDeleteSelectedAccountFiles(request, env) {
+  const session = await getSessionFromRequest(request, env);
+  if (!session) return json({ error: 'Please sign in first' }, 401);
+  let body;
+  try {
+    body = await request.json();
+  } catch (error) {
+    return json({ error: `Request body must be valid JSON: ${error.message}` }, 400);
+  }
+  const requestedIds = Array.from(new Set(
+    (Array.isArray(body?.ids) ? body.ids : [])
+      .map((item) => String(item || '').trim())
+      .filter(Boolean)
+  ));
+  if (!requestedIds.length) {
+    return json({ error: 'ids must be a non-empty array' }, 400);
+  }
+  await ensurePublishedFilesTable(env);
+  const files = [];
+  for (const chunk of chunkArray(requestedIds, 100)) {
+    const inClause = sqlPlaceholders(chunk.length);
+    const result = await env.DB.prepare(
+      `SELECT id, file_name
+       FROM published_files
+       WHERE user_id = ? AND id IN (${inClause})`
+    ).bind(session.userId, ...chunk).all();
+    for (const item of result.results || []) {
+      files.push({
+        id: String(item.id || ''),
+        fileName: String(item.file_name || item.id || '')
+      });
+    }
+  }
+  const deletedIds = [];
+  for (const file of files) {
+    if (!file.id) continue;
+    await deleteFileAndMeta(file.id, env);
+    deletedIds.push(file.id);
+  }
+  const deletedIdSet = new Set(deletedIds);
+  return json({
+    success: true,
+    deleted: true,
+    requestedCount: requestedIds.length,
+    deletedCount: deletedIds.length,
+    deletedIds,
+    missingIds: requestedIds.filter((id) => !deletedIdSet.has(id))
   });
 }
 
@@ -4953,15 +5388,42 @@ async function handleAdminCleanupExpired(request, env) {
   return json(result);
 }
 
+async function handleAdminCleanupIncomplete(request, env) {
+  const session = await getSessionFromRequest(request, env);
+  if (!session) return json({ error: 'Please sign in first' }, 401);
+  if (!session.isAdmin) return json({ error: 'Administrator access is required' }, 403);
+  let body = {};
+  try {
+    if (request.headers.get('content-type')?.includes('application/json')) {
+      body = await request.json();
+    }
+  } catch {}
+  const maxAgeHours = Math.max(Number(body?.maxAgeHours || 24), 1);
+  const result = await cleanupIncompleteUploads(env, {
+    limit: body?.limit || INCOMPLETE_UPLOAD_CLEANUP_BATCH_LIMIT,
+    maxAgeMs: maxAgeHours * 60 * 60 * 1000
+  });
+  return json(result);
+}
+
 async function runScheduledCleanup(env) {
   if (!env?.FILES) {
     return { success: false, skipped: true, reason: 'files_binding_missing' };
   }
-  const result = await cleanupExpiredFiles(env, {
+  const expired = await cleanupExpiredFiles(env, {
     limit: EXPIRED_CLEANUP_BATCH_LIMIT
   });
-  console.log(`[cleanupExpiredFiles] checked=${result.checked} deleted=${result.deleted} truncated=${result.truncated}`);
-  return result;
+  const incomplete = await cleanupIncompleteUploads(env, {
+    limit: INCOMPLETE_UPLOAD_CLEANUP_BATCH_LIMIT,
+    maxAgeMs: INCOMPLETE_UPLOAD_MAX_AGE_MS
+  });
+  console.log(`[cleanupExpiredFiles] checked=${expired.checked} deleted=${expired.deleted} truncated=${expired.truncated}`);
+  console.log(`[cleanupIncompleteUploads] checked=${incomplete.checked} deletedObjects=${incomplete.deletedObjects} deletedSessions=${incomplete.deletedSessions} abortedMultipart=${incomplete.abortedMultipart} truncated=${incomplete.truncated}`);
+  return {
+    success: true,
+    expired,
+    incomplete
+  };
 }
 
 async function handleUploadConfig(request, env) {
@@ -5970,10 +6432,13 @@ export default {
     if (url.pathname === '/api/auth/logout' && request.method === 'POST') return handleLogout(request, env);
     if (url.pathname === '/api/account/me' && request.method === 'GET') return handleAccountMe(request, env);
     if (url.pathname === '/api/account/files' && request.method === 'GET') return handleAccountFiles(request, env);
+    if (url.pathname === '/api/account/files' && request.method === 'DELETE') return handleDeleteAllAccountFiles(request, env);
+    if (url.pathname === '/api/account/files/delete-selected' && request.method === 'POST') return handleDeleteSelectedAccountFiles(request, env);
     if (url.pathname === '/api/account/sites' && request.method === 'GET') return handleAccountSites(request, env);
     if (url.pathname === '/api/account/api-keys' && request.method === 'POST') return handleCreateApiKey(request, env);
     if (url.pathname === '/api/admin/api-keys' && request.method === 'GET') return handleAdminApiKeys(request, env);
     if (url.pathname === '/api/admin/cleanup-expired' && request.method === 'POST') return handleAdminCleanupExpired(request, env);
+    if (url.pathname === '/api/admin/cleanup-incomplete' && request.method === 'POST') return handleAdminCleanupIncomplete(request, env);
 
     const adminKeyMatch = url.pathname.match(/^\/api\/admin\/api-keys\/([^/]+)$/);
     if (adminKeyMatch && request.method === 'POST') {
@@ -6032,11 +6497,13 @@ export default {
     if (url.pathname === '/api/auth/request-link') return methodNotAllowed(request, ['POST']);
     if (url.pathname === '/api/auth/logout') return methodNotAllowed(request, ['POST']);
     if (url.pathname === '/api/account/me') return methodNotAllowed(request, ['GET']);
-    if (url.pathname === '/api/account/files') return methodNotAllowed(request, ['GET']);
+    if (url.pathname === '/api/account/files') return methodNotAllowed(request, ['GET', 'DELETE']);
+    if (url.pathname === '/api/account/files/delete-selected') return methodNotAllowed(request, ['POST']);
     if (url.pathname === '/api/account/sites') return methodNotAllowed(request, ['GET']);
     if (url.pathname === '/api/account/api-keys') return methodNotAllowed(request, ['POST']);
     if (url.pathname === '/api/admin/api-keys') return methodNotAllowed(request, ['GET']);
     if (url.pathname === '/api/admin/cleanup-expired') return methodNotAllowed(request, ['POST']);
+    if (url.pathname === '/api/admin/cleanup-incomplete') return methodNotAllowed(request, ['POST']);
     if (adminKeyMatch) return methodNotAllowed(request, ['POST']);
     if (accountKeyMatch) return methodNotAllowed(request, ['PATCH', 'DELETE']);
     if (accountFileMatch) return methodNotAllowed(request, ['DELETE']);

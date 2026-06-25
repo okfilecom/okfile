@@ -1,0 +1,11 @@
+LICENSE
+README.md
+pyproject.toml
+okfile.egg-info/PKG-INFO
+okfile.egg-info/SOURCES.txt
+okfile.egg-info/dependency_links.txt
+okfile.egg-info/entry_points.txt
+okfile.egg-info/requires.txt
+okfile.egg-info/top_level.txt
+okfile_cli/__init__.py
+okfile_cli/__main__.py

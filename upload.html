@@ -7,8 +7,6 @@
 <meta name="description" id="metaDesc" content="OkFile manual upload page for images, videos, PDFs, common files, and full static site folders. Small files use quick upload automatically, larger files switch to multipart, and API or Python CLI integration remains the recommended path for agents.">
 <meta name="robots" content="noindex,follow">
 <meta name="theme-color" content="#f5f7fb">
-<link rel="icon" href="/favicon.svg" type="image/svg+xml">
-<link rel="shortcut icon" href="/favicon.ico">
 <style>
   *{margin:0;padding:0;box-sizing:border-box}
   html{background:#f5f7fb}
@@ -40,15 +38,6 @@
   .picker-actions{width:100%;max-width:720px;display:flex;justify-content:center;gap:10px;flex-wrap:wrap;margin-top:12px}
   .picker-btn{padding:10px 18px;border-radius:12px;border:1px solid #dce4ee;background:#fff;color:#334155;cursor:pointer;transition:.2s;box-shadow:0 1px 2px rgba(15,23,42,.04)}
   .picker-btn:hover{border-color:#c7d6ea;color:#0f172a;background:#f8fafc}
-  .upload-settings{width:100%;max-width:720px;margin-top:12px;padding:14px 16px;border-radius:14px;background:#fff;border:1px solid #dce4ee;box-shadow:0 6px 16px rgba(15,23,42,.04)}
-  .upload-settings.is-disabled{opacity:.65}
-  .upload-settings-title{font-size:13px;font-weight:700;color:#0f172a;margin-bottom:10px}
-  .setting-check{display:flex;align-items:flex-start;gap:10px;cursor:pointer}
-  .setting-check input{margin-top:3px}
-  .setting-copy{display:grid;gap:4px}
-  .setting-copy strong{font-size:13px;color:#0f172a}
-  .setting-copy span{font-size:12px;line-height:1.6;color:#64748b}
-  .settings-mode-note{margin-top:10px;font-size:12px;color:#64748b}
   .upload-note,.site-publish-note{width:100%;max-width:720px;margin-top:12px;padding:14px 16px;border-radius:14px;background:#f8fbff;border:1px solid #d7e6fb;color:#334155;font-size:13px;line-height:1.7}
   .upload-note strong,.site-publish-note strong{color:#1d4ed8}
 
@@ -117,7 +106,6 @@
   .result-card .body{padding:10px 12px}
   .result-card .link{font-size:11px;color:#1d4ed8;word-break:break-all;font-family:'SF Mono',Consolas,monospace;margin-bottom:8px;line-height:1.4}
   .result-card .sub-link{font-size:11px;color:#0369a1;word-break:break-all;font-family:'SF Mono',Consolas,monospace;margin-top:-2px;margin-bottom:8px;line-height:1.4}
-  .result-card .result-note{font-size:11px;line-height:1.6;color:#92400e;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:8px 10px;margin-bottom:8px}
   .link-actions{display:flex;gap:6px}
   .link-actions button{flex:1;padding:5px 0;border-radius:6px;font-size:11px;cursor:pointer;transition:.15s}
   .cp-btn{background:#fff;border:1px solid #dce4ee;color:#475569}
@@ -175,18 +163,7 @@
   <button type="button" class="picker-btn" id="pickFilesBtn">Select Files to Upload</button>
   <button type="button" class="picker-btn" id="pickFolderBtn">Select Folder as Site</button>
 </div>
-<div class="upload-settings" id="uploadSettings">
-  <div class="upload-settings-title">Upload Options</div>
-  <label class="setting-check" for="burnAfterReadToggle">
-    <input type="checkbox" id="burnAfterReadToggle">
-    <span class="setting-copy">
-      <strong>Burn after read</strong>
-      <span id="burnAfterReadHelp">For file uploads only. The first successful preview or download invalidates the file and all related links.</span>
-    </span>
-  </label>
-  <div class="settings-mode-note" id="settingsModeNote">This option is available for single-file uploads. Site publishing keeps its existing behavior.</div>
-  <div class="settings-mode-note" id="uploadLimitNote">Current account: Standard. Max single file: 500 MB.</div>
-</div>
+<div class="upload-note" id="uploadLimitNote">Anonymous upload: max single file 1 GB. Files are temporary and expire after 24 hours. Use an API Key for larger files up to 1 TB.</div>
 
 <!-- Actions -->
 <div class="actions-bar" id="ab">
@@ -256,12 +233,7 @@ const t = {
   siteSubdirsReady: 'Nested subdirectories were preserved and remain directly accessible after publishing.',
   siteUpdateBanner: 'You are updating an existing site: {siteId}. Select the full new folder tree and OkFile will switch to the new release atomically after upload.',
   siteUpdateFailed: 'Some files failed, so site publishing was cancelled: ',
-  siteVersionSwitched: 'Switched to site release V{versionNo}',
-  burnAfterReadLabel: 'Burn after read',
-  burnAfterReadHelp: 'For file uploads only. The first successful preview or download invalidates the file and all related links.',
-  burnAfterReadModeNote: 'This option is available for single-file uploads. Site publishing keeps its existing behavior.',
-  burnAfterReadModeNoteSite: 'Site publishing ignores burn-after-read. Switch back to file upload mode to use this option.',
-  burnAfterReadResult: 'One-time file: the first successful preview or download invalidates this file and all related links.'
+  siteVersionSwitched: 'Switched to site release V{versionNo}'
 };
 function _t(key) { return t[key]; }
 
@@ -271,9 +243,11 @@ let batchMode = null;
 let siteResult = null;
 let siteUploadMeta = null;
 let uploadConfig = {
-  maxSize: 500 * 1024 * 1024,
-  maxSizeLabel: '500 MB',
-  vipLabel: 'Standard',
+  maxSize: 1024 * 1024 * 1024,
+  maxSizeLabel: '1.0 GB',
+  vipLabel: 'Anonymous',
+  expirationNote: 'Anonymous uploads are temporary and will be deleted after 24 hours.',
+  recommendation: 'Use an API Key or Sign In to support up to 1TB files and permanent storage.',
   quickUploadMaxSize: 5 * 1024 * 1024,
   multipartThreshold: 25 * 1024 * 1024,
   partSize: 10 * 1024 * 1024,
@@ -308,14 +282,10 @@ const $ = id => document.getElementById(id);
 const dz=$('dz'), fi=$('fi'), di=$('di'), fl=$('fl'), fc=$('fc'), fiList=$('fiList');
 const ab=$('ab'), upBtn=$('upBtn');
 const err=$('err'), res=$('res'), grid=$('grid'), ts=$('ts');
+const uploadLimitNote = $('uploadLimitNote');
 const siteResultCard = $('siteResultCard');
 const pickFilesBtn = $('pickFilesBtn');
 const pickFolderBtn = $('pickFolderBtn');
-const uploadSettings = $('uploadSettings');
-const burnAfterReadToggle = $('burnAfterReadToggle');
-const burnAfterReadHelp = $('burnAfterReadHelp');
-const settingsModeNote = $('settingsModeNote');
-const uploadLimitNote = $('uploadLimitNote');
 const pageParams = new URLSearchParams(location.search);
 const siteUpdateTargetId = /^st_[a-z0-9]+$/i.test(String(pageParams.get('siteId') || '').trim())
   ? String(pageParams.get('siteId') || '').trim()
@@ -339,25 +309,6 @@ if (upBtn) {
   });
 }
 
-function syncUploadSettings() {
-  const isSiteMode = batchMode === 'site';
-  if (burnAfterReadHelp) burnAfterReadHelp.textContent = _t('burnAfterReadHelp');
-  if (settingsModeNote) {
-    settingsModeNote.textContent = isSiteMode ? _t('burnAfterReadModeNoteSite') : _t('burnAfterReadModeNote');
-  }
-  if (burnAfterReadToggle) {
-    burnAfterReadToggle.disabled = isSiteMode;
-  }
-  if (uploadSettings) {
-    uploadSettings.classList.toggle('is-disabled', isSiteMode);
-  }
-  if (uploadLimitNote) {
-    const vipLabel = uploadConfig?.vipLabel || 'Standard';
-    const maxLabel = uploadConfig?.maxSizeLabel || fmtSize(uploadConfig?.maxSize || MAX_SIZE);
-    uploadLimitNote.textContent = `Current account: ${vipLabel}. Max single file: ${maxLabel}.`;
-  }
-}
-
 function openPicker(input) {
   if (!input) return;
   try {
@@ -373,7 +324,18 @@ if (pickFilesBtn) pickFilesBtn.addEventListener('click', () => openPicker(fi));
 if (pickFolderBtn) pickFolderBtn.addEventListener('click', () => openPicker(di));
 
 let MAX_SIZE = uploadConfig.maxSize;
-syncUploadSettings();
+
+function syncUploadLimitNote() {
+  if (!uploadLimitNote) return;
+  const vipLabel = uploadConfig?.vipLabel || 'Anonymous';
+  const maxLabel = uploadConfig?.maxSizeLabel || fmtSize(uploadConfig?.maxSize || MAX_SIZE);
+  const expirationNote = uploadConfig?.expirationNote || '';
+  const recommendation = uploadConfig?.recommendation || '';
+  const parts = [`Current mode: ${vipLabel}. Max single file: ${maxLabel}.`];
+  if (expirationNote) parts.push(expirationNote);
+  if (recommendation) parts.push(`Recommended: ${recommendation}`);
+  uploadLimitNote.textContent = parts.join(' ');
+}
 
 // ── Dropzone events ──
 dz.ondragover = e => { e.preventDefault(); dz.classList.add('dragover') };
@@ -456,7 +418,6 @@ function addFiles(fileList, mode) {
   applyLangToJS();
   fi.value = '';
   di.value = '';
-  syncUploadSettings();
 }
 
 function removeFile(uid) {
@@ -468,7 +429,6 @@ function removeFile(uid) {
   }
   renderFileList();
   applyLangToJS();
-  syncUploadSettings();
 }
 
 function clearFiles() {
@@ -485,7 +445,6 @@ function clearFiles() {
   err.classList.remove('show');
   fi.value = '';
   di.value = '';
-  syncUploadSettings();
 }
 
 function renderFileList() {
@@ -591,12 +550,19 @@ async function loadUploadConfig() {
   try {
     const res = await fetch(API + '/api/upload/config');
     const data = await res.json();
-    if (!res.ok || !(data && data.success)) return;
-    uploadConfig = data;
+    if (!res.ok || !(data && data.success)) {
+      if (data?.error) showErr(data.error);
+      return;
+    }
+    uploadConfig = {
+      ...uploadConfig,
+      ...data,
+      ...(data.uploadPolicy || {})
+    };
     MAX_SIZE = data.maxSize || MAX_SIZE;
     const maxLabel = data.maxSizeLabel || fmtSize(MAX_SIZE);
     document.querySelectorAll('.max-size-label').forEach(el => el.textContent = maxLabel);
-    syncUploadSettings();
+    syncUploadLimitNote();
   } catch (_) {}
 }
 
@@ -856,9 +822,6 @@ function uploadOne(item) {
       if (item.file.size <= (uploadConfig.quickUploadMaxSize || 5 * 1024 * 1024)) {
         const quickBody = new FormData();
         quickBody.append('file', item.file, item.file.name);
-        if (burnAfterReadToggle && burnAfterReadToggle.checked && batchMode !== 'site') {
-          quickBody.append('burnAfterRead', 'true');
-        }
         const quickRes = await fetch(API + '/api/upload/quick', {
           method: 'POST',
           body: quickBody
@@ -880,8 +843,7 @@ function uploadOne(item) {
           body: JSON.stringify({
             filename: item.file.name,
             size: item.file.size,
-            contentType: item.file.type || undefined,
-            burnAfterRead: Boolean(burnAfterReadToggle && burnAfterReadToggle.checked && batchMode !== 'site')
+            contentType: item.file.type || undefined
           })
         });
 
@@ -1025,7 +987,6 @@ function showResults() {
     return `<div class="result-card">
       <div class="thumb-wrap">${media}<span class="type-tag ${tagClass}">${tagLabel}</span></div>
       <div class="body">
-      ${r.burnAfterRead ? `<div class="result-note">${escHTML(_t('burnAfterReadResult'))}</div>` : ''}
       <div class="link" title="Direct Link">${directUrl}</div>
       <div class="sub-link" title="Preview/Play Link">${previewUrl}</div>
         <div class="link-actions">
@@ -1068,6 +1029,7 @@ function fmtSize(b) {
   return b+' B';
 }
 
+syncUploadLimitNote();
 loadUploadConfig();
 </script>
 </body>

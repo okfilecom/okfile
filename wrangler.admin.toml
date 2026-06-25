@@ -22,6 +22,5 @@ binding = "DB"
 database_name = "okfile-auth"
 database_id = "0fcf12da-a653-4dee-ad50-04e097ec1c66"
 
-# Optional: enable automatic cleanup after the first admin deployment is verified.
-#[triggers]
-#crons = ["*/30 * * * *"]
+[triggers]
+crons = ["0 * * * *"]

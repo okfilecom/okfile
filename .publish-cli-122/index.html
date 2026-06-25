@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OkFile - Agent-First File Upload and Publish Service</title>
+<meta name="description" id="metaDesc" content="OkFile provides agent-first file upload and publish APIs with quick upload for small files, multipart uploads for large files, Python CLI automation, direct links, preview URLs, and static site folder publishing.">
+<meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1">
+<meta name="theme-color" content="#f5f7fb">
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  :root{
+    --bg:#f5f7fb;--surface:#ffffff;--surface-alt:#fbfcfe;--border:#dce4ee;--text:#0f172a;--muted:#64748b;
+    --primary:#1d4ed8;--primary-hover:#1e40af;--accent:#f48120;--accent-hover:#dd6b20;--soft:#eff6ff;
+  }
+  body{font-family:Inter,ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif;background:linear-gradient(180deg,#f7f9fc 0%,#eef3f9 100%);color:var(--text);line-height:1.6}
+  .topbar{position:sticky;top:0;z-index:100;background:rgba(247,249,252,.92);backdrop-filter:blur(16px);border-bottom:1px solid var(--border)}
+  .topbar-inner{width:min(1120px,100%);margin:0 auto;padding:14px 24px;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
+  .brand{display:inline-flex;align-items:center;gap:10px;text-decoration:none}
+  .brand-logo{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:10px;background:linear-gradient(135deg,var(--accent),#ffb347);color:#fff;font-weight:800;box-shadow:0 8px 18px rgba(244,129,32,.2)}
+  .brand-copy strong{display:block;font-size:16px;color:var(--text)}
+  .brand-copy span{display:block;font-size:12px;color:var(--muted)}
+  .top-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .top-actions a{padding:8px 14px;border-radius:999px;border:1px solid var(--border);background:#fff;color:#475569;text-decoration:none;font-size:12px;box-shadow:0 1px 2px rgba(15,23,42,.04);transition:.2s}
+  .top-actions a:hover{border-color:#c7d6ea;color:var(--text);background:var(--surface-alt)}
+  .top-actions a.primary{background:var(--primary);border-color:var(--primary);color:#fff;box-shadow:0 8px 18px rgba(29,78,216,.14)}
+  .top-actions a.primary:hover{background:var(--primary-hover);border-color:var(--primary-hover)}
+  .hero{text-align:center;padding:60px 24px 20px;max-width:860px;margin:0 auto}
+  .hero .badge{display:inline-block;background:#fff7ed;color:#c2410c;border:1px solid #fed7aa;padding:4px 14px;border-radius:20px;font-size:12px;font-weight:600;letter-spacing:.5px;margin-bottom:16px}
+  .hero h1{font-size:clamp(34px,6vw,56px);font-weight:800;color:var(--text);line-height:1.12;margin-bottom:12px}
+  .hero h1 .lead{display:block;font-size:clamp(20px,3vw,28px);font-weight:600;color:#475569;margin-bottom:8px}
+  .hero h1 .main{display:block;color:var(--primary)}
+  .hero p{font-size:17px;color:var(--muted);max-width:700px;margin:0 auto;line-height:1.8}
+  .hero .actions{display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin-top:22px}
+  .hero .actions a{display:inline-flex;align-items:center;gap:8px;padding:13px 28px;border-radius:10px;font-size:15px;font-weight:600;transition:.2s;text-decoration:none}
+  .btn-primary{background:linear-gradient(135deg,var(--primary),#2563eb);color:#fff;border:1px solid rgba(37,99,235,.28);box-shadow:0 12px 30px rgba(37,99,235,.14)}
+  .btn-primary:hover{background:linear-gradient(135deg,var(--primary-hover),#1d4ed8);border-color:rgba(37,99,235,.44)}
+  .btn-outline{background:#fff;color:#334155;border:1px solid var(--border)}
+  .btn-outline:hover{border-color:#c7d6ea;color:var(--text);background:var(--surface-alt)}
+  section{max-width:960px;margin:0 auto;padding:48px 24px}
+  h2{font-size:24px;font-weight:700;color:var(--text);margin-bottom:8px}
+  h2 .num{color:var(--primary);font-size:18px;font-weight:700;margin-right:6px}
+  .section-desc{color:var(--muted);font-size:15px;margin-bottom:28px}
+  #features{padding-top:12px}
+  .features{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+  .feature-card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px;transition:.2s;box-shadow:0 8px 18px rgba(15,23,42,.04)}
+  .feature-card:hover{border-color:#c7d6ea;background:#fcfdff}
+  .feature-card .feature-head{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+  .feature-card .icon{font-size:20px;line-height:1;flex-shrink:0}
+  .feature-card h3{font-size:15px;font-weight:600;color:var(--text);line-height:1.25}
+  .feature-card p{font-size:13px;color:var(--muted);line-height:1.55}
+  .formats{display:flex;flex-wrap:wrap;gap:8px}
+  .fmt-tag{background:var(--surface);border:1px solid var(--border);padding:5px 14px;border-radius:999px;font-size:12px;color:#475569}
+  .agent-box{background:linear-gradient(135deg,#ffffff 0%,#f8fbff 100%);border:1px solid #dce4ee;border-radius:16px;padding:36px;margin-top:24px;box-shadow:0 12px 28px rgba(15,23,42,.05)}
+  .agent-box h3{font-size:18px;color:var(--text);margin-bottom:8px;display:flex;align-items:center;gap:8px}
+  .agent-desc{font-size:14px;color:var(--muted);margin-bottom:20px}
+  .skill-meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:20px}
+  .meta-item{background:#fff;border:1px solid var(--border);border-radius:12px;padding:12px 16px}
+  .meta-item .label{font-size:11px;color:#94a3b8;text-transform:uppercase;letter-spacing:.5px}
+  .meta-item .value{font-size:14px;color:#334155;margin-top:2px}
+  .agent-actions{display:flex;gap:10px;flex-wrap:wrap}
+  .agent-actions a{display:inline-flex;align-items:center;gap:8px;padding:10px 14px;border-radius:10px;border:1px solid var(--border);color:#334155;text-decoration:none;font-size:13px;transition:.2s;background:#fff}
+  .agent-actions a:hover{border-color:#c7d6ea;color:var(--text);background:var(--surface-alt)}
+  .doc-link{color:var(--primary);text-decoration:none}
+  .doc-link:hover{text-decoration:underline}
+  .code-block{background:#fff;border:1px solid var(--border);border-radius:14px;overflow:hidden;margin:20px 0;box-shadow:0 8px 18px rgba(15,23,42,.04)}
+  .code-header{display:flex;align-items:center;justify-content:space-between;padding:10px 16px;background:var(--surface-alt);border-bottom:1px solid var(--border)}
+  .code-header .label{font-size:12px;color:#64748b}
+  .code-header button{font-size:11px;padding:4px 12px;border-radius:999px;background:#fff;color:#334155;border:1px solid var(--border);cursor:pointer}
+  pre{padding:18px 20px;overflow-x:auto;font-size:13px;line-height:1.65}
+  code{font-family:'SF Mono',Consolas,'Cascadia Code',monospace;color:#334155}
+  .code-string{color:#0369a1}
+  .code-keyword{color:#7c3aed}
+  .code-url{color:#1d4ed8}
+  .code-flag{color:#c2410c}
+  table{width:100%;border-collapse:collapse;font-size:13px;margin-top:24px}
+  th{text-align:left;padding:10px 14px;background:var(--surface-alt);color:#64748b;font-weight:600;border-bottom:1px solid var(--border);font-size:12px;text-transform:uppercase;letter-spacing:.5px}
+  td{padding:10px 14px;border-bottom:1px solid #edf2f7;color:var(--muted);background:#fff}
+  tr:last-child td{border-bottom:none}
+  .method{font-family:monospace;font-size:11px;font-weight:700;padding:3px 8px;border-radius:4px;display:inline-block}
+  .method-get{background:#ecfdf3;color:#166534}
+  .method-post{background:#eff6ff;color:#1d4ed8}
+  td code{font-family:'SF Mono',Consolas,monospace;font-size:12px;color:var(--primary)}
+  .download-box{background:linear-gradient(135deg,#ffffff 0%,#f8fbff 100%);border:1px solid var(--border);border-radius:16px;padding:28px;box-shadow:0 12px 28px rgba(15,23,42,.05)}
+  .download-box p{color:var(--muted);font-size:14px;line-height:1.75}
+  .download-actions{display:flex;gap:12px;flex-wrap:wrap;margin:18px 0 12px}
+  .download-actions a{display:inline-flex;align-items:center;gap:8px;padding:12px 18px;border-radius:10px;text-decoration:none;font-size:14px;font-weight:600}
+  .download-meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-top:18px}
+  .download-meta .meta-item{background:#fff;border:1px solid var(--border);border-radius:12px;padding:12px 16px}
+  footer{text-align:center;padding:32px 24px;font-size:12px;color:#94a3b8;border-top:1px solid var(--border)}
+  footer a{color:var(--primary);text-decoration:none}
+  @media(max-width:640px){
+    .hero{padding:40px 20px 28px}
+    .topbar-inner{padding:12px 16px}
+    .features{grid-template-columns:1fr}
+    .feature-card{padding:16px}
+  }
+</style>
+</head>
+<body>
+<div class="topbar">
+  <div class="topbar-inner">
+    <a class="brand" href="/">
+      <span class="brand-logo">O</span>
+      <span class="brand-copy">
+        <strong>OkFile</strong>
+        <span>Agent-First Publishing</span>
+      </span>
+    </a>
+    <div class="top-actions">
+      <a href="#agent-integration">Agent Skill</a>
+      <a href="#cli-download">CLI Install</a>
+      <a href="#api-doc">API Docs</a>
+      <a href="/account">Account</a>
+      <a class="primary" href="/upload.html">Manual Upload</a>
+    </div>
+  </div>
+</div>
+<div class="hero">
+  <div class="badge">V1.2.2 | Files | Sites | API | CLI</div>
+  <h1><span class="lead">File &amp; Site Publish Service</span><span class="main">Designed for Agents</span></h1>
+  <p>Publish files or full static sites through one flow across API, CLI, and manual upload.</p>
+  <div class="actions">
+    <a class="btn-primary" href="https://pypi.org/project/okfile/" target="_blank" rel="noopener">Install from PyPI</a>
+    <a class="btn-outline" href="https://www.okfile.com" target="_blank" rel="noopener">Visit Website</a>
+    <a class="btn-outline" href="https://github.com/okfilecom/okfile" target="_blank" rel="noopener">GitHub</a>
+  </div>
+</div>
+<section id="features">
+  <div class="features">
+    <div class="feature-card">
+      <div class="feature-head">
+        <div class="icon">&#129302;</div>
+        <h3>API and CLI</h3>
+      </div>
+      <p>Use one delivery flow across agents, scripts, and the Python CLI.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-head">
+        <div class="icon">&#128279;</div>
+        <h3>Quick to Multipart</h3>
+      </div>
+        <p>Small files use quick upload, while larger ones switch to multipart automatically.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-head">
+        <div class="icon">&#127760;</div>
+        <h3>File and Site Publish</h3>
+      </div>
+      <p>Publish single files or full folders with preserved paths and a dedicated site domain.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-head">
+        <div class="icon">&#128230;</div>
+        <h3>Batch Uploads</h3>
+      </div>
+      <p>Handle multiple files in one run and keep the same upload flow across the whole batch.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-head">
+        <div class="icon">&#128274;</div>
+        <h3>Guest or API Key</h3>
+      </div>
+      <p>Start with guest upload for quick tasks, then switch to API Keys for higher limits and control.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-head">
+        <div class="icon">&#128247;</div>
+        <h3>Links and Preview</h3>
+      </div>
+      <p>Return direct file links together with preview or playback pages when the file type supports it.</p>
+    </div>
+  </div>
+</section>
+<section id="agent-integration">
+  <h2><span class="num">01</span>Agent Skill</h2>
+  <p class="section-desc">Use this when you want an agent-ready integration flow.</p>
+  <div class="agent-box">
+    <h3>OkFile Skill</h3>
+    <p class="agent-desc">Covers config discovery, file upload, and static site publishing with the same flow used by the Python CLI.</p>
+    <div class="skill-meta">
+      <div class="meta-item">
+        <div class="label">Skill Name</div>
+        <div class="value">okfile</div>
+      </div>
+      <div class="meta-item">
+        <div class="label">Version</div>
+        <div class="value">V1.2.2</div>
+      </div>
+      <div class="meta-item">
+        <div class="label">Doc Location</div>
+        <div class="value"><a class="doc-link" href="/SKILL.md" target="_blank" rel="noopener">./SKILL.md</a></div>
+      </div>
+      <div class="meta-item">
+        <div class="label">Trigger Scenario</div>
+        <div class="value">Publish files or full static sites through one consistent API and CLI flow.</div>
+      </div>
+      <div class="meta-item">
+        <div class="label">Supported Types</div>
+        <div class="value">Images, videos, PDFs, common files, and static site folders (&le;500MB per file).</div>
+      </div>
+      <div class="meta-item">
+        <div class="label">API Endpoints</div>
+        <div class="value">GET /api/upload/config, POST /api/upload/quick, POST /api/upload/prepare, PUT uploadUrl, POST /api/upload/complete, POST /api/site/prepare, POST /api/site/complete</div>
+      </div>
+      <div class="meta-item">
+        <div class="label">Auth Method</div>
+        <div class="value">Anonymous uploads are IP rate-limited. Logged-in users can publish with API Keys.</div>
+      </div>
+      <div class="meta-item">
+        <div class="label">Return Value</div>
+        <div class="value">{success, id, url, downloadUrl, playUrl, type} or {siteUrl, entryUrl}</div>
+      </div>
+    </div>
+    <div class="code-block">
+      <div class="code-header">
+        <span class="label">Integration Flows</span>
+      </div>
+      <pre><code>Publish File
+1. GET /api/upload/config
+2. If size <= quickUploadMaxSize, POST /api/upload/quick
+3. Otherwise POST /api/upload/prepare
+4. PUT to uploadUrl or each parts[].uploadUrl
+5. POST /api/upload/complete
+
+Publish Site
+1. POST /api/site/prepare
+2. Upload each site file through quick or standard file flow and collect fileId values
+3. POST /api/site/complete
+4. Return siteUrl and entryUrl</code></pre>
+    </div>
+    <div class="agent-actions" style="margin-top:16px">
+      <a href="/SKILL.md" target="_blank" rel="noopener">Open Skill Doc</a>
+      <a href="/SKILL.md" download="SKILL.md">Download SKILL.md</a>
+      <a href="https://www.okfile.com" target="_blank" rel="noopener">Open Website</a>
+      <a href="https://github.com/okfilecom/okfile" target="_blank" rel="noopener">GitHub Repo</a>
+    </div>
+  </div>
+</section>
+<section id="cli-download">
+  <h2><span class="num">02</span>CLI Install</h2>
+  <p class="section-desc">Use PyPI by default and keep the wheel as a fallback.</p>
+  <div class="download-box">
+    <p>The current CLI release is available on PyPI and as a direct wheel download.</p>
+    <div class="download-actions">
+      <a class="btn-primary" href="https://pypi.org/project/okfile/" target="_blank" rel="noopener">Open PyPI Package</a>
+      <a class="btn-outline" href="/downloads/okfile-1.2.2-py3-none-any.whl" download>Download `okfile` Wheel</a>
+      <a class="btn-outline" href="/SKILL.md" target="_blank" rel="noopener">Open Install and API Doc</a>
+    </div>
+    <div class="download-meta">
+      <div class="meta-item">
+        <div class="label">Recommended Source</div>
+        <div class="value">Latest PyPI install: `py -3 -m pip install okfile`</div>
+      </div>
+      <div class="meta-item">
+        <div class="label">Filename</div>
+        <div class="value">`okfile-1.2.2-py3-none-any.whl`</div>
+      </div>
+      <div class="meta-item">
+        <div class="label">Command Name</div>
+        <div class="value">`okfile`</div>
+      </div>
+      <div class="meta-item">
+        <div class="label">Install Type</div>
+        <div class="value">Latest PyPI install by default, pinned version or direct `wheel` as fallback</div>
+      </div>
+    </div>
+    <div class="code-block">
+      <div class="code-header">
+        <span class="label">Install Commands</span>
+        <button onclick="cpCode(this)">Copy</button>
+      </div>
+      <pre><code><span class="code-keyword">py</span> -3 -m <span class="code-keyword">pip</span> install <span class="code-string">okfile</span>
+
+<span class="code-keyword">okfile</span> --version
+
+<span class="code-keyword">py</span> -3 -m <span class="code-keyword">pip</span> install <span class="code-string">okfile==1.2.2</span>
+
+<span class="code-keyword">py</span> -3 -m <span class="code-keyword">pip</span> install <span class="code-flag">--upgrade</span> <span class="code-string">okfile</span>
+
+<span class="code-keyword">py</span> -3 -m <span class="code-keyword">pip</span> install <span class="code-string">"https://www.okfile.com/downloads/okfile-1.2.2-py3-none-any.whl"</span></code></pre>
+    </div>
+  </div>
+</section>
+<section id="api-doc">
+  <h2><span class="num">03</span>API Docs</h2>
+  <p class="section-desc">Start with config, then upload files or publish sites.</p>
+  <div class="code-block">
+    <div class="code-header">
+      <span class="label">Quick Start</span>
+      <button onclick="cpCode(this)">Copy</button>
+    </div>
+    <pre><code><span class="code-keyword">curl</span> <span class="code-string">"https://www.okfile.com/api/upload/config"</span>
+
+<span class="code-keyword">curl</span> <span class="code-flag">-X POST</span> <span class="code-string">"https://www.okfile.com/api/upload/quick"</span> \
+  <span class="code-flag">-F</span> <span class="code-string">"file=@photo.jpg"</span>
+
+<span class="code-keyword">curl</span> <span class="code-flag">-X POST</span> <span class="code-string">"https://www.okfile.com/api/upload/prepare"</span> \
+  <span class="code-flag">-H</span> <span class="code-string">"Content-Type: application/json"</span> \
+  <span class="code-flag">--data</span> <span class="code-string">'{"filename":"photo.jpg","size":12345,"contentType":"image/jpeg","preferredPartSize":5242880}'</span>
+
+<span class="code-keyword">curl</span> <span class="code-flag">-X POST</span> <span class="code-string">"https://www.okfile.com/api/upload/complete"</span> \
+  <span class="code-flag">-H</span> <span class="code-string">"Content-Type: application/json"</span> \
+  <span class="code-flag">--data</span> <span class="code-string">'{"id":"a3k7m92x"}'</span>
+
+<span class="code-keyword">curl</span> <span class="code-string">"https://www.okfile.com/api/upload/status/a3k7m92x"</span>
+
+<span class="code-keyword">curl</span> <span class="code-flag">-X POST</span> <span class="code-string">"https://www.okfile.com/api/site/prepare"</span> \
+  <span class="code-flag">-H</span> <span class="code-string">"Content-Type: application/json"</span> \
+  <span class="code-flag">--data</span> <span class="code-string">'{"siteName":"docs-site","files":[{"path":"docs/getting-started.md","size":1200,"contentType":"text/markdown; charset=utf-8"},{"path":"assets/app.css","size":3200,"contentType":"text/css; charset=utf-8"}]}'</span>
+
+<span class="code-keyword">curl</span> <span class="code-flag">-X POST</span> <span class="code-string">"https://www.okfile.com/api/site/complete"</span> \
+  <span class="code-flag">-H</span> <span class="code-string">"Content-Type: application/json"</span> \
+  <span class="code-flag">--data</span> <span class="code-string">'{"siteId":"st_xxxx","siteToken":"token_xxxx","files":[{"relativePath":"docs/getting-started.md","fileId":"a3k7m92x"},{"relativePath":"assets/app.css","fileId":"b8f2k19a"}]}'</span></code></pre>
+  </div>
+  <table>
+    <tr><th>Method</th><th>Endpoint</th><th>Description</th></tr>
+    <tr><td><span class="method method-get">GET</span></td><td><code>/api/upload/config</code></td><td>Discover current quick-upload, multipart, and size limits before starting automation.</td></tr>
+    <tr><td><span class="method method-post">POST</span></td><td><code>/api/upload/quick</code></td><td>Upload a small file directly and receive the same final response shape as upload complete.</td></tr>
+    <tr><td><span class="method method-post">POST</span></td><td><code>/api/upload/prepare</code></td><td>Request a single-upload or multipart upload URL and receive the future public file URLs.</td></tr>
+    <tr><td><span class="method">PUT</span></td><td><code>uploadUrl / parts[].uploadUrl</code></td><td>Upload the file body or each file part directly.</td></tr>
+    <tr><td><span class="method method-post">POST</span></td><td><code>/api/upload/complete</code></td><td>Finalize the upload using the returned file id.</td></tr>
+    <tr><td><span class="method method-get">GET</span></td><td><code>/api/upload/status/{id}</code></td><td>Query multipart upload progress and status.</td></tr>
+    <tr><td><span class="method method-post">POST</span></td><td><code>/api/site/prepare</code></td><td>Create a publish session for a static site folder.</td></tr>
+    <tr><td><span class="method method-post">POST</span></td><td><code>/api/site/complete</code></td><td>Finalize static site publishing and receive the site URLs.</td></tr>
+    <tr><td><span class="method method-get">GET</span></td><td><code>/i/{id}</code></td><td>Direct file URL.</td></tr>
+    <tr><td><span class="method method-get">GET</span></td><td><code>/i/{id}?play=1</code></td><td>Preview or playback page for images, videos, and PDFs.</td></tr>
+  </table>
+</section>
+<footer>
+  <p><strong style="color:#0f172a">OkFile</strong> &middot; Agent-first file publish service</p>
+  <p style="margin-top:6px">Anonymous upload + API Key publish + static site folder delivery</p>
+  <p style="margin-top:6px"><a href="https://www.okfile.com" target="_blank" rel="noopener">www.okfile.com</a> &middot; <a href="https://github.com/okfilecom/okfile" target="_blank" rel="noopener">github.com/okfilecom/okfile</a></p>
+</footer>
+<script>
+function cpCode(btn) {
+  const block = btn.closest('.code-block');
+  const text = block.querySelector('code').textContent;
+  navigator.clipboard.writeText(text).then(() => {
+    const originalText = btn.textContent;
+    btn.textContent = 'Copied!';
+    setTimeout(() => {
+      btn.textContent = originalText;
+    }, 1500);
+  });
+}
+document.querySelectorAll('.top-actions a[href^="#"]').forEach((a) => {
+  a.onclick = (e) => {
+    e.preventDefault();
+    document.querySelector(a.getAttribute('href')).scrollIntoView({ behavior: 'smooth' });
+  };
+});
+</script>
+</body>
+</html>

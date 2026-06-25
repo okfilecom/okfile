@@ -74,7 +74,7 @@ It supports:
 - authenticated uploads with user API keys
 - direct file URLs for download or embedding
 - preview/playback URLs for image, video, and PDF
-- anonymous single-file uploads up to `500MB`
+- anonymous single-file uploads up to `1GB`
 - API Key uploads up to `1TB` per file
 - temporary retention for anonymous uploads, with current default expiry at `24 hours`
 - multipart upload for larger authenticated files
@@ -93,7 +93,7 @@ It supports:
 2. `PUT uploadUrl` or each `parts[].uploadUrl`
 3. `POST /api/upload/complete`
 4. return `url` and optionally `playUrl`
-5. current single-file limit is `500MB`, and uploaded files expire after `24 hours`
+5. current single-file limit is `1GB`, and uploaded files expire after `24 hours`
 
 ### 2. API Key Publish
 

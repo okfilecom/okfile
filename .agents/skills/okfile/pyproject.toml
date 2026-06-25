@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "okfile"
+version = "1.2.2"
+description = "Python CLI for uploading files and publishing static sites to OkFile"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+keywords = ["okfile", "upload", "publish", "cli", "cloudflare", "r2"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Internet",
+  "Topic :: Utilities"
+]
+dependencies = [
+  "requests>=2.31.0"
+]
+
+[project.urls]
+Homepage = "https://www.okfile.com"
+Repository = "https://github.com/okfilecom/okfile"
+Issues = "https://github.com/okfilecom/okfile/issues"
+
+[project.scripts]
+okfile = "okfile_cli.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["okfile_cli*"]

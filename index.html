@@ -120,7 +120,7 @@
   </div>
 </div>
 <div class="hero">
-  <div class="badge">V1.2.3 | Files | Sites | API | CLI</div>
+  <div class="badge">V1.3.0 | Files | Sites | API | CLI</div>
   <h1><span class="lead">File &amp; Site Publish Service</span><span class="main">Designed for Agents</span></h1>
   <p>Publish files or full static sites through one flow across API, CLI, and manual upload, including one-time burn-after-read links for sensitive files.</p>
 </div>
@@ -159,7 +159,7 @@
         <div class="icon">&#128274;</div>
         <h3>Guest or API Key</h3>
       </div>
-      <p>Start with guest upload for quick tasks, then switch to API Keys for higher limits and control.</p>
+      <p>Start with guest upload for quick tasks at 1GB per file with 24-hour retention, then switch to API Keys for uploads up to 1TB per file.</p>
     </div>
     <div class="feature-card">
       <div class="feature-head">
@@ -183,7 +183,7 @@
       </div>
       <div class="meta-item">
         <div class="label">Version</div>
-        <div class="value">V1.2.3</div>
+        <div class="value">V1.3.0</div>
       </div>
       <div class="meta-item">
         <div class="label">Doc Location</div>
@@ -195,7 +195,7 @@
       </div>
       <div class="meta-item">
         <div class="label">Supported Types</div>
-        <div class="value">Images, videos, PDFs, common files, and static site folders (&le;500MB per file).</div>
+        <div class="value">Images, videos, PDFs, common files, and static site folders (guest uploads up to 1GB per file, API Key uploads up to 1TB per file).</div>
       </div>
       <div class="meta-item">
         <div class="label">API Endpoints</div>
@@ -203,7 +203,7 @@
       </div>
       <div class="meta-item">
         <div class="label">Auth Method</div>
-        <div class="value">Anonymous uploads are IP rate-limited. Logged-in users can publish with API Keys.</div>
+        <div class="value">Anonymous uploads are IP rate-limited and currently expire after 24 hours. Logged-in users can publish with API Keys for up to 1TB per file.</div>
       </div>
       <div class="meta-item">
         <div class="label">Return Value</div>
@@ -243,7 +243,7 @@ Publish Site
     <div class="download-actions">
       <a class="btn-primary" href="https://www.npmjs.com/package/@okfilecom/okfile" target="_blank" rel="noopener">Open npm Package</a>
       <a class="btn-outline" href="https://pypi.org/project/okfile/" target="_blank" rel="noopener">Open PyPI Package</a>
-      <a class="btn-outline" href="/downloads/okfile-1.2.3-py3-none-any.whl" download>Download `okfile` Wheel</a>
+      <a class="btn-outline" href="/downloads/okfile-1.3.0-py3-none-any.whl" download>Download `okfile` Wheel</a>
       <a class="btn-outline" href="/SKILL.md" target="_blank" rel="noopener">Open Install and API Doc</a>
     </div>
     <div class="download-meta">
@@ -253,7 +253,7 @@ Publish Site
       </div>
       <div class="meta-item">
         <div class="label">Filename</div>
-        <div class="value">`okfile-1.2.3-py3-none-any.whl`</div>
+        <div class="value">`okfile-1.3.0-py3-none-any.whl`</div>
       </div>
       <div class="meta-item">
         <div class="label">Command Name</div>
@@ -277,11 +277,11 @@ Publish Site
 
 <span class="code-keyword">npx</span> <span class="code-string">@okfilecom/okfile</span> publish ./my-site
 
-<span class="code-keyword">py</span> -3 -m <span class="code-keyword">pip</span> install <span class="code-string">okfile==1.2.3</span>
+<span class="code-keyword">py</span> -3 -m <span class="code-keyword">pip</span> install <span class="code-string">okfile==1.3.0</span>
 
 <span class="code-keyword">py</span> -3 -m <span class="code-keyword">pip</span> install <span class="code-flag">--upgrade</span> <span class="code-string">okfile</span>
 
-<span class="code-keyword">py</span> -3 -m <span class="code-keyword">pip</span> install <span class="code-string">"https://www.okfile.com/downloads/okfile-1.2.3-py3-none-any.whl"</span></code></pre>
+<span class="code-keyword">py</span> -3 -m <span class="code-keyword">pip</span> install <span class="code-string">"https://www.okfile.com/downloads/okfile-1.3.0-py3-none-any.whl"</span></code></pre>
     </div>
   </div>
 </section>
@@ -319,7 +319,7 @@ Publish Site
   </div>
   <table>
     <tr><th>Method</th><th>Endpoint</th><th>Description</th></tr>
-    <tr><td><span class="method method-get">GET</span></td><td><code>/api/upload/config</code></td><td>Discover current quick-upload, multipart, and size limits before starting automation.</td></tr>
+    <tr><td><span class="method method-get">GET</span></td><td><code>/api/upload/config</code></td><td>Discover current quick-upload, multipart, retention, and size limits before starting automation.</td></tr>
     <tr><td><span class="method method-post">POST</span></td><td><code>/api/upload/quick</code></td><td>Upload a small file directly and receive the same final response shape as upload complete, including optional <code>burnAfterRead</code>.</td></tr>
     <tr><td><span class="method method-post">POST</span></td><td><code>/api/upload/prepare</code></td><td>Request a single-upload or multipart upload URL and receive the future public file URLs, with optional one-time burn-after-read behavior.</td></tr>
     <tr><td><span class="method">PUT</span></td><td><code>uploadUrl / parts[].uploadUrl</code></td><td>Upload the file body or each file part directly.</td></tr>
@@ -333,7 +333,7 @@ Publish Site
 </section>
 <footer>
   <p><strong style="color:#0f172a">OkFile</strong> &middot; Agent-first file publish service</p>
-  <p style="margin-top:6px">Anonymous upload + API Key publish + static site folder delivery</p>
+  <p style="margin-top:6px">Anonymous upload up to 1GB with 24-hour retention + API Key publish up to 1TB + static site folder delivery</p>
   <p style="margin-top:6px"><a href="https://www.okfile.com" target="_blank" rel="noopener">www.okfile.com</a> &middot; <a href="https://github.com/okfilecom/okfile" target="_blank" rel="noopener">github.com/okfilecom/okfile</a></p>
 </footer>
 <script>

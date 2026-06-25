@@ -1,8 +1,46 @@
 {
-  "name": "okfile-cf",
-  "private": true,
+  "name": "@okfilecom/okfile",
+  "version": "1.3.0",
+  "description": "Agent-first file upload and publish service built on Cloudflare Pages Functions, R2, and D1.",
+  "license": "Apache-2.0",
+  "homepage": "https://www.okfile.com",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/okfilecom/okfile.git"
+  },
+  "bugs": {
+    "url": "https://github.com/okfilecom/okfile/issues"
+  },
+  "keywords": [
+    "okfile",
+    "upload",
+    "publish",
+    "cloudflare",
+    "workers",
+    "pages",
+    "r2"
+  ],
   "type": "module",
+  "exports": {
+    ".": "./worker-app.js"
+  },
+  "files": [
+    "worker-app.js",
+    "_worker.js",
+    "index.html",
+    "upload.html",
+    "README.md",
+    "LICENSE",
+    "wrangler.toml",
+    "wrangler.sites.jsonc"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "dependencies": {
     "aws4fetch": "^1.0.20"
+  },
+  "devDependencies": {
+    "wrangler": "^4.103.0"
   }
 }
